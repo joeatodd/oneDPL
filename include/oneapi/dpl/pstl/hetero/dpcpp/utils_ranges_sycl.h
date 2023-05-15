@@ -97,6 +97,54 @@ class all_view
     __accessor_t __m_acc;
 };
 
+//A SYCL range over SYCL USM ptr
+template <typename _T, sycl::access::mode _AccMode = sycl::access::mode::read>
+class all_view_usm
+{
+    using __return_t = typename ::std::conditional<_AccMode == sycl::access::mode::read, const _T, _T>::type;
+    using __diff_type = typename ::std::iterator_traits<_T*>::difference_type;
+
+  public:
+    all_view_usm(_T * __ptr, __diff_type __size)
+        : __m_ptr(__ptr), __m_size(__size)
+    {
+    }
+
+    __return_t*
+    begin() const
+    {
+        return &__m_ptr[0];
+    } //or “honest” iterator over an accessor and a sentinel
+
+    __return_t*
+    end() const
+    {
+        return begin() + size();
+    }
+    __return_t& operator[](__diff_type i) const { return begin()[i]; }
+
+    __diff_type
+    size() const
+    {
+        return __m_size;
+    }
+    bool
+    empty() const
+    {
+        return size() == 0;
+    }
+
+    void
+    require_access(sycl::handler& __cgh)
+    {
+        (void)__cgh;
+    }
+
+  private:
+    __return_t * __m_ptr;
+    __diff_type __m_size;
+};
+
 template <sycl::access::mode AccMode = sycl::access::mode::read_write,
           __dpl_sycl::__target _Target = __dpl_sycl::__target_device,
           sycl::access::placeholder _Placeholder = sycl::access::placeholder::true_t>
