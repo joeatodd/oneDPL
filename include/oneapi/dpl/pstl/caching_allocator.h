@@ -3,7 +3,12 @@
 
 #include <sycl/sycl.hpp>
 #include <mutex>
-#include <map>
+#include <cassert>
+
+#include <iostream>
+
+// Use (void) to silence unused warnings.
+#define assertm(exp, msg) assert(((void)msg, exp))
 
 // TODO: see about storing queue and adding default constructor
 class mem_block
@@ -17,13 +22,15 @@ class mem_block
     // TODO: add safety checks, i.e. cant return memory already returned.
     // can't request memory that is already free
     void
-    return_mem()
+    return_mem(const void* d_ptr)
     {
+        assertm(d_ptr == d_ptr_, "Invalid pointer being returned");
         is_free_ = true;
     }
     void*
     request_mem()
     {
+        assertm(is_free_, "This memory is not free to be requested");
         is_free_ = false;
         return d_ptr_;
     }
@@ -109,15 +116,14 @@ class mem_block_manager
                 {
                     if (block.is_same(d_ptr))
                     {
-                        block.return_mem();
+                        block.return_mem(d_ptr);
+                        return;
                     }
                 }
             }
         }
 
-        // Not 100% sure how to handle case where memory is being freed but not created by CachingAllocator
-        // Currently just gonna manually free it
-        sycl::free(d_ptr, queue);
+        assertm(false, "You cannot return mem you have not borrowed from the manager");
     }
 
     void
@@ -159,6 +165,20 @@ class CachingDeviceAllocator
     {
         std::lock_guard<std::mutex> guard(memory_manager_mutex);
         memory_manager.return_mem(queue, d_ptr);
+    }
+
+    // TODO: make variadic template version
+    template <typename ptrT>
+    sycl::event
+    EnqueueDeviceFree(sycl::queue queue, ptrT* d_ptr, std::vector<sycl::event> events)
+    {
+        // TODO: figure out how to make this thread safe with lock_guard
+        return queue.submit([=](sycl::handler& cgh){
+            cgh.depends_on(events);
+            cgh.host_task([=]() {
+                memory_manager.return_mem(queue, d_ptr);
+            });
+        });
     }
 
     void

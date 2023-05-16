@@ -695,11 +695,6 @@ __parallel_radix_sort(_ExecutionPolicy&& __exec, _Range&& __in_rng, _Proj __proj
     // radix bits represent number of processed bits in each value during one iteration
     constexpr ::std::uint32_t __radix_bits = 4;
 
-    //sycl::buffer doesn't have a default constructor; so, we have to pass zero-range to create an empty buffer
-    ::std::uint32_t* __tmp_ptr = nullptr;
-    sycl::buffer<_ValueT, 1> __val_buf(sycl::range<1>(0));
-    sycl::event __event{};
-
     const auto __max_wg_size = oneapi::dpl::__internal::__max_work_group_size(__exec);
 
     //TODO: 1.to reduce number of the kernels; 2.to define work group size in runtime, depending on number of elements
@@ -707,6 +702,8 @@ __parallel_radix_sort(_ExecutionPolicy&& __exec, _Range&& __in_rng, _Proj __proj
 
     //TODO: with _RadixSortKernel also the following a couple of compile time constants is used for unique kernel name
     using _RadixSortKernel = typename __decay_t<_ExecutionPolicy>::kernel_name;
+
+    sycl::event __event{};
 
     if (__n <= 64 && __wg_size <= __max_wg_size)
         __event = __subgroup_radix_sort<_RadixSortKernel, __wg_size, 1, __radix_bits, __is_ascending>{}(
@@ -749,13 +746,14 @@ __parallel_radix_sort(_ExecutionPolicy&& __exec, _Range&& __in_rng, _Proj __proj
         // additional __radix_states elements are used for getting local offsets from count values
         const ::std::size_t __tmp_ptr_size = __segments * __radix_states + __radix_states;
         // memory for storing count and offset values
+        ::std::uint32_t* __tmp_ptr = nullptr;
         cache_alloc.DeviceAllocate(__exec.queue(), &__tmp_ptr, __tmp_ptr_size);
 
         // memory for storing values sorted for an iteration
-        __internal::__buffer<_DecExecutionPolicy, _ValueT> __out_buffer_holder{__exec, __n};
-        __val_buf = __out_buffer_holder.get_buffer();
+        _ValueT* __val_ptr = nullptr;
+        cache_alloc.DeviceAllocate(__exec.queue(), &__val_ptr, __n);
         auto __out_rng = 
-            oneapi::dpl::__ranges::all_view<_ValueT, __par_backend_hetero::access_mode::read_write>(__val_buf);
+            oneapi::dpl::__ranges::all_view_usm<_ValueT, __par_backend_hetero::access_mode::read_write>(__val_ptr, __n);
 
         // iterations per each bucket
         assert("Number of iterations must be even" && __radix_iters % 2 == 0);
@@ -772,9 +770,11 @@ __parallel_radix_sort(_ExecutionPolicy&& __exec, _Range&& __in_rng, _Proj __proj
                     ::std::forward<_ExecutionPolicy>(__exec), __segments, __radix_iter, __out_rng,
                     ::std::forward<_Range>(__in_rng), __tmp_ptr, __tmp_ptr_size, __event, __proj);
         }
+        __event = cache_alloc.EnqueueDeviceFree(__exec.queue(), __tmp_ptr, std::vector<sycl::event>{__event});
+        __event = cache_alloc.EnqueueDeviceFree(__exec.queue(), __val_ptr, std::vector<sycl::event>{__event});
     }
 
-    return __future(__event, __tmp_ptr, __val_buf);
+    return __event;
 }
 
 } // namespace __par_backend_hetero
