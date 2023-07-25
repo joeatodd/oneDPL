@@ -186,6 +186,44 @@ struct __init_processing
 
 // Load elements consecutively from global memory, transform them, and apply a local reduction. Each local result is
 // stored in local memory.
+// template <typename _ExecutionPolicy, ::std::uint8_t __iters_per_work_item, typename _Operation1, typename _Operation2>
+// struct transform_reduce
+// {
+//     _Operation1 __binary_op;
+//     _Operation2 __unary_op;
+// 
+//     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
+//     void
+//     operator()(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
+//                const _Acc&... __acc) const
+//     {
+//         auto __global_idx = __item_id.get_global_id(0);
+//         auto __local_idx = __item_id.get_local_id(0);
+//         const _Size __adjusted_global_id = __global_offset + __iters_per_work_item * __global_idx;
+//         const _Size __adjusted_n = __global_offset + __n;
+//         // Add neighbour to the current __local_mem
+//         if (__adjusted_global_id + __iters_per_work_item < __adjusted_n)
+//         {
+//             // Keep these statements in the same scope to allow for better memory alignment
+//             typename _AccLocal::value_type __res = __unary_op(__adjusted_global_id, __acc...);
+//             _ONEDPL_PRAGMA_UNROLL
+//             for (_Size __i = 1; __i < __iters_per_work_item; ++__i)
+//                 __res = __binary_op(__res, __unary_op(__adjusted_global_id + __i, __acc...));
+//             __local_mem[__local_idx] = __res;
+//         }
+//         else if (__adjusted_global_id < __adjusted_n)
+//         {
+//             const _Size __items_to_process = __adjusted_n - __adjusted_global_id;
+//             // Keep these statements in the same scope to allow for better memory alignment
+//             typename _AccLocal::value_type __res = __unary_op(__adjusted_global_id, __acc...);
+//             for (_Size __i = 1; __i < __items_to_process; ++__i)
+//                 __res = __binary_op(__res, __unary_op(__adjusted_global_id + __i, __acc...));
+//             __local_mem[__local_idx] = __res;
+//         }
+//     }
+// };
+
+// Coalesced non-sequential impl
 template <typename _ExecutionPolicy, ::std::uint8_t __iters_per_work_item, typename _Operation1, typename _Operation2>
 struct transform_reduce
 {
@@ -199,29 +237,138 @@ struct transform_reduce
     {
         auto __global_idx = __item_id.get_global_id(0);
         auto __local_idx = __item_id.get_local_id(0);
-        const _Size __adjusted_global_id = __global_offset + __iters_per_work_item * __global_idx;
+        const _Size __stride = __item_id.get_local_range(0);
+
+        const _Size __adjusted_global_id = __global_offset + __global_idx + __stride * __iters_per_work_item * __item_id.get_group_linear_id();
         const _Size __adjusted_n = __global_offset + __n;
-        // Add neighbour to the current __local_mem
-        if (__adjusted_global_id + __iters_per_work_item < __adjusted_n)
+        // Coalesced load and reduce from global memory
+        if (__adjusted_global_id + __stride * __iters_per_work_item < __adjusted_n)
         {
             // Keep these statements in the same scope to allow for better memory alignment
             typename _AccLocal::value_type __res = __unary_op(__adjusted_global_id, __acc...);
             _ONEDPL_PRAGMA_UNROLL
             for (_Size __i = 1; __i < __iters_per_work_item; ++__i)
-                __res = __binary_op(__res, __unary_op(__adjusted_global_id + __i, __acc...));
+                __res = __binary_op(__res, __unary_op(__adjusted_global_id + __stride * __i, __acc...));
             __local_mem[__local_idx] = __res;
         }
         else if (__adjusted_global_id < __adjusted_n)
         {
-            const _Size __items_to_process = __adjusted_n - __adjusted_global_id;
+            // TODO: simplify to not use floats
+            const _Size __items_to_process = std::max(int(floor(float(__adjusted_n - __adjusted_global_id - 1)/__stride)) + 1, 0);
             // Keep these statements in the same scope to allow for better memory alignment
             typename _AccLocal::value_type __res = __unary_op(__adjusted_global_id, __acc...);
             for (_Size __i = 1; __i < __items_to_process; ++__i)
-                __res = __binary_op(__res, __unary_op(__adjusted_global_id + __i, __acc...));
+                __res = __binary_op(__res, __unary_op(__adjusted_global_id + __stride * __i, __acc...));
             __local_mem[__local_idx] = __res;
         }
     }
 };
+
+// Probably don't want to always inline this
+// Reduces __iters_per_work_item elements from global memory and returns the value
+template <::std::uint8_t __iters_per_work_item, typename _Tp, typename _BinaryOperation, typename _UnaryOperation, 
+          typename _NDItemId, typename _Size, typename... _Acc>
+inline _Tp global_to_reg_reduce(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset,
+                            const _BinaryOperation& __bin_op, const _UnaryOperation& __un_op, const _Acc&... __acc) {
+  auto __global_idx = __item_id.get_global_id(0);
+  auto __local_idx = __item_id.get_local_id(0);
+  const _Size __stride = __item_id.get_local_range(0);
+
+  const _Size __adjusted_global_id = __global_offset + __global_idx + __stride * __iters_per_work_item * __item_id.get_group_linear_id();
+  const _Size __adjusted_n = __global_offset + __n;
+
+  _Tp __res = __known_identity<_BinaryOperation, _Tp>;
+  // Coalesced load and reduce from global memory
+  // TODO: consider branch divergence across subgroup
+  if (__stride * __iters_per_work_item < __adjusted_n)
+  {
+      __res = __un_op(__adjusted_global_id, __acc...);
+      _ONEDPL_PRAGMA_UNROLL
+      for (_Size __i = 1; __i < __iters_per_work_item; ++__i)
+          __res = __bin_op(__res, __un_op(__adjusted_global_id + __stride * __i, __acc...));
+  }
+  else
+  {
+      // TODO: simplify to not use floats
+      const _Size __items_to_process = std::max(int(floor(float(__adjusted_n - __adjusted_global_id - 1)/__stride)) + 1, 0);
+      __res = __un_op(__adjusted_global_id, __acc...);
+      for (_Size __i = 1; __i < __items_to_process; ++__i)
+          __res = __bin_op(__res, __un_op(__adjusted_global_id + __stride * __i, __acc...));
+  }
+  return __res;
+}
+
+// Reduce over sub_group with size known at compile time
+template <::std::uint16_t sg_size, typename _BinaryOperation, typename _Tp>
+inline __attribute__((always_inline)) _Tp reduce_over_sub_group(_Tp val, const sycl::sub_group& sg, const _BinaryOperation& __bin_op) {
+  _ONEDPL_PRAGMA_UNROLL
+  for (int offset = sg_size/2; offset > 0; offset /=2)
+     val = __bin_op(val, sg.shuffle_down(val, offset));
+  return val;
+}
+
+// Requires (wg_size/sg_size)*sizeof(_Tp) worth of local memory
+template <::std::uint16_t sg_size, typename _BinaryOperation, typename _NDItemId, typename _Tp>
+inline __attribute__((always_inline)) 
+_Tp reduce_over_work_group(_Tp val, const _NDItemId& __item_id, sycl::local_accessor<_Tp>& local_acc, const _BinaryOperation& __bin_op) {
+  auto sg = __item_id.get_sub_group();
+  auto wg_local_id = __item_id.get_local_linear_id();
+  auto sg_group_id = sg.get_group_linear_id();
+
+  val = reduce_over_sub_group<sg_size>(val, sg, __bin_op);
+
+  if (sg.get_local_linear_id() == 0)
+      local_acc[sg_group_id] = val;
+
+  __dpl_sycl::__group_barrier(__item_id);
+ 
+  val = (wg_local_id < sg.get_group_range().size()) ? local_acc[wg_local_id] : __known_identity<_BinaryOperation, _Tp>;
+
+  if (sg_group_id == 0)
+      val = reduce_over_sub_group<sg_size>(val, sg, __bin_op);
+   return val;
+}
+
+
+// Uses sub_group reduction to reduce __iters_per_work_item * sg_size elements
+// Outputs one value, only for use with 1 sub_group and 1 work_group
+template <::std::uint16_t sg_size, ::std::uint8_t __iters_per_work_item, 
+          typename _BinaryOperation, typename _UnaryOperation, typename _Tp,
+          typename _NDItemId, typename _Size>
+inline __attribute__((always_inline))
+void reduce_sub_group_kernel(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset,
+                             const sycl::accessor<_Tp, 1, sycl::access::mode::read>& __input,
+                             const sycl::accessor<_Tp, 1, sycl::access::mode::write>& __output) {
+    _BinaryOperation __bin_op;
+    _UnaryOperation __un_op;
+    _Tp val = global_to_reg_reduce<__iters_per_work_item, _Tp>(__item_id, __n, __global_offset, __bin_op, __un_op, __input);
+
+    val = reduce_over_sub_group<sg_size>(val, __item_id.get_sub_group(), __bin_op);
+
+    if (__item_id.get_global_id(0) == 0)
+        __output[0] = val;
+}
+
+// Uses sub_group reduction to reduce __iters_per_work_item * sg_size elements
+// Outputs one value, only for use with 1 sub_group and 1 work_group
+// Requires (wg_size/sg_size) elements of local memory
+template <::std::uint16_t sg_size, ::std::uint8_t __iters_per_work_item, 
+          typename _BinaryOperation, typename _UnaryOperation, typename _Tp,
+          typename _NDItemId, typename _Size>
+inline __attribute__((always_inline))
+void reduce_work_group_kernel(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset,
+                             sycl::local_accessor<_Tp> local_acc,
+                             const sycl::accessor<_Tp, 1, sycl::access::mode::read>& __input,
+                             const sycl::accessor<_Tp, 1, sycl::access::mode::write>& __output) {
+    _BinaryOperation __bin_op;
+    _UnaryOperation __un_op;
+    _Tp val = global_to_reg_reduce<__iters_per_work_item, _Tp>(__item_id, __n, __global_offset, __bin_op, __un_op, __input);
+
+    val = reduce_over_work_group<sg_size>(val, __item_id, local_acc, __bin_op);
+
+    if (__item_id.get_local_id(0) == 0)
+        __output[__item_id.get_group_linear_id()] = val;
+}
 
 // Reduce local reductions of each work item to a single reduced element per work group. The local reductions are held
 // in local memory. sycl::reduce_over_group is used for supported data types and operations. All other operations are

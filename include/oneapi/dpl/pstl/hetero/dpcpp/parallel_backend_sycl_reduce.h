@@ -90,6 +90,181 @@ __device_reduce_kernel(const _NDItemId __item_id, const _Size __n, const _Size _
 // Please see the comment for __parallel_for_submitter for optional kernel name explanation
 //------------------------------------------------------------------------
 
+// Parallel_transform_reduce for a small arrays using a single sub group.
+// Transforms and reduces __sub_group_size * __iters_per_work_item elements.
+template <::std::uint16_t __sub_group_size, ::std::uint8_t __iters_per_work_item, typename _Tp>
+struct __parallel_reduce_sub_group_submitter
+{
+    template <typename _ReduceOp, typename _TransformOp, typename _Size, typename _InitType>
+    sycl::event
+    operator()(sycl::queue Q, const _Size __n, _ReduceOp __reduce_op, _TransformOp __transform_op, _InitType __init,
+               sycl::buffer<_Tp> __input, sycl::buffer<_Tp> __res) const
+    {
+        return Q.submit([&, __n](sycl::handler& __cgh) {
+            auto __input_acc = __input.template get_access<sycl::access::mode::read>(__cgh);
+            auto __res_acc = __res.template get_access<sycl::access::mode::write>(__cgh);
+            __cgh.parallel_for(
+                sycl::nd_range<1>(sycl::range<1>(__sub_group_size), sycl::range<1>(__sub_group_size)),
+                [=](sycl::nd_item<1> __item_id) [[sycl::reqd_work_group_size(__sub_group_size), sycl::reqd_sub_group_size(__sub_group_size)]] {
+                    unseq_backend::reduce_sub_group_kernel<__sub_group_size, __iters_per_work_item, _ReduceOp, _TransformOp, _Tp>(__item_id, __n, 0ul, __input_acc, __res_acc);
+                });
+        });
+    }
+}; // struct __parallel_transform_reduce_sub_group_submitter
+
+// Parallel_transform_reduce for an array which fits in a single work group
+// Transforms and reduces __sub_group_size * __iters_per_work_item elements.
+template <::std::uint16_t __work_group_size, ::std::uint16_t __sub_group_size, ::std::uint8_t __iters_per_work_item, typename _Tp>
+struct __parallel_reduce_single_work_group_submitter
+{
+    template <typename _ReduceOp, typename _TransformOp, typename _Size, typename _InitType>
+    sycl::event
+    operator()(sycl::queue Q, const _Size __n, _ReduceOp __reduce_op, _TransformOp __transform_op, _InitType __init,
+               sycl::buffer<_Tp> __input, sycl::buffer<_Tp> __res) const
+    {
+        return Q.submit([&, __n](sycl::handler& __cgh) {
+            auto __input_acc = __input.template get_access<sycl::access::mode::read>(__cgh);
+            auto __res_acc = __res.template get_access<sycl::access::mode::write>(__cgh);
+            sycl::local_accessor<int> local_acc(__work_group_size/__sub_group_size, __cgh);
+            __cgh.parallel_for(
+                sycl::nd_range<1>(sycl::range<1>(__work_group_size), sycl::range<1>(__work_group_size)),
+                [=](sycl::nd_item<1> __item_id) [[sycl::reqd_work_group_size(__work_group_size), sycl::reqd_sub_group_size(__sub_group_size)]] {
+                    unseq_backend::reduce_work_group_kernel<__sub_group_size, __iters_per_work_item, _ReduceOp, 
+                                                                  _TransformOp, _Tp>(__item_id, __n, 0ul, local_acc, __input_acc, __res_acc);
+                });
+        });
+    }
+}; // struct __parallel_transform_reduce_single_work_group_submitter
+
+// Parallel_transform_reduce for an array across multiple work gropus
+// Transforms and reduces __sub_group_size * __iters_per_work_item elements per work group
+// leading to ceil(__n/(__sub_group * __iters_per_work_item)) outputs
+template <::std::uint16_t __work_group_size, ::std::uint16_t __sub_group_size, ::std::uint8_t __iters_per_work_item, typename _Tp>
+struct __parallel_reduce_multi_work_group_submitter
+{
+    template <typename _ReduceOp, typename _TransformOp, typename _Size, typename _InitType>
+    sycl::event
+    operator()(sycl::queue Q, const _Size __n, _ReduceOp __reduce_op, _TransformOp __transform_op, _InitType __init,
+               sycl::buffer<_Tp> __input, sycl::buffer<_Tp> __res) const
+    {
+        const _Size __global_size = oneapi::dpl::__internal::__dpl_ceiling_div(__n, __work_group_size * __iters_per_work_item) * __work_group_size;
+        return Q.submit([&, __n](sycl::handler& __cgh) {
+            auto __input_acc = __input.template get_access<sycl::access::mode::read>(__cgh);
+            auto __res_acc = __res.template get_access<sycl::access::mode::write>(__cgh);
+            sycl::local_accessor<int> local_acc(__work_group_size/__sub_group_size, __cgh);
+            __cgh.parallel_for(
+                sycl::nd_range<1>(sycl::range<1>(__global_size), sycl::range<1>(__work_group_size)),
+                [=](sycl::nd_item<1> __item_id) [[sycl::reqd_work_group_size(__work_group_size), sycl::reqd_sub_group_size(__sub_group_size)]] {
+                    unseq_backend::reduce_work_group_kernel<__sub_group_size, __iters_per_work_item, _ReduceOp, 
+                                                                  _TransformOp, _Tp>(__item_id, __n, 0ul, local_acc, __input_acc, __res_acc);
+                });
+        });
+    }
+}; // struct __parallel_transform_reduce_multi_work_group_submitter
+
+template <::std::uint16_t __work_group_size, ::std::uint16_t __sub_group_size, typename _Tp,
+           typename _ReduceOp, typename _TransformOp, typename _Size, typename _InitType>
+sycl::event __reduce_iter(sycl::queue Q, const _Size __n, _ReduceOp __reduce_op, _TransformOp __transform_op, _InitType __init,
+                          sycl::buffer<_Tp> __input, sycl::buffer<_Tp> __res) {
+    constexpr ::std::uint8_t __sub_group_iters_per_item = 64;
+    constexpr ::std::uint8_t __work_group_iters_per_item = 32;
+
+    constexpr _Size sub_group_limit = __sub_group_size * __sub_group_iters_per_item;
+    constexpr _Size work_group_limit = __work_group_size * __work_group_iters_per_item;
+    static_assert(sub_group_limit < work_group_limit);
+
+    sycl::event __e;
+    if(__n < sub_group_limit) {
+        // Sub group reduce
+        __parallel_reduce_sub_group_submitter<__sub_group_size, __sub_group_iters_per_item, _Tp> __sub_group_reduce;
+        __e = __sub_group_reduce(Q, __n, __reduce_op, __transform_op, __init, __input, __res);
+    } else if (__n < work_group_limit) {
+        // Single work item reduce
+        __parallel_reduce_single_work_group_submitter<__work_group_size, __sub_group_size, __work_group_iters_per_item, _Tp> __work_group_reduce;
+        __e = __work_group_reduce(Q, __n, __reduce_op, __transform_op, __init, __input, __res);
+    } else {
+        // Multi work item reduce
+        __parallel_reduce_multi_work_group_submitter<__work_group_size, __sub_group_size, __work_group_iters_per_item, _Tp> __multi_group_reduce;
+        __e = __multi_group_reduce(Q, __n, __reduce_op, __transform_op, __init, __input, __res);
+    }
+    return __e;
+}
+
+
+// Helper used for calculating scratchpad memory
+template <::std::uint16_t __work_group_size, typename _Size>
+_Size __calc_reduce_output_size(const _Size& __n) {
+    constexpr ::std::uint8_t __work_group_iters_per_item = 32;
+    _Size work_group_limit = __work_group_size * __work_group_iters_per_item;
+
+    // TODO: see if __work_group_iters_per_item can be combined with __reduce_iter
+    if(__n < work_group_limit) 
+        // Sub group or work item reduce
+        return 1;
+
+    // Multi work item reduce
+    return oneapi::dpl::__internal::__dpl_ceiling_div(__n, __work_group_size * __work_group_iters_per_item);
+}
+
+// Internally used to calculate number of __reduce_itter calls needed
+template <::std::uint16_t __work_group_size, typename _Size>
+_Size __calc_reduce_passes(const _Size& __n) {
+    _Size __output_size = __n;
+
+    _Size n_iter = 0;
+    while(__output_size > 1){
+        __output_size = __calc_reduce_output_size<__work_group_size>(__n);
+        ++n_iter;
+    }
+    return n_iter;
+}
+
+// Internally used to allocate scratchpad memory
+template <::std::uint16_t __work_group_size, typename _Size>
+_Size __calc_reduce_scratch_size(const _Size& __n, const _Size& __n_passes) {
+   if (__n_passes == 2) {
+       return __calc_reduce_output_size<__work_group_size>(__n);
+   } else if (__n_passes > 2) {
+       _Size __intermediate_n = __calc_reduce_output_size<__work_group_size>(__n);
+       return __calc_reduce_output_size<__work_group_size>(__intermediate_n) + __intermediate_n;
+   }
+   return 0; // 1 pass
+}
+
+// Handles calls to __reduce_iter and scratch memory
+template <::std::uint16_t __work_group_size, ::std::uint16_t __sub_group_size, typename _Tp,
+           typename _ReduceOp, typename _TransformOp, typename _Size, typename _InitType>
+sycl::event __reduce_driver(sycl::queue Q, const _Size __n, _ReduceOp __reduce_op, _TransformOp __transform_op, _InitType __init,
+                          sycl::buffer<_Tp> __input, sycl::buffer<_Tp> __res) {
+    _Size __n_passes = __calc_reduce_passes<__work_group_size>(__n);
+
+    // Get scratch memory splits
+    // TODO: make USM and offset
+    _Size __scratchpad_size_total = __calc_reduce_scratch_size<__work_group_size>(__n, __n_passes);
+    _Size __scratchpad_size_1 = __calc_reduce_output_size<__work_group_size>(__n);
+
+    sycl::buffer<_Tp> __scratch_mem_1((__n_passes > 1) ? __scratchpad_size_1 : 1);
+    sycl::buffer<_Tp> __scratch_mem_2((__n_passes > 2) ? __calc_reduce_output_size<__work_group_size>(__n) : 1);
+
+    sycl::event e;
+    sycl::buffer<_Tp> __iter_in_ptr = __input;
+    sycl::buffer<_Tp> __iter_out_ptr = __scratch_mem_1;
+    _Size __iter_n = __n;
+    for (int i = 0; i < __n_passes; ++i) {
+        if (i > 0) {
+            // if not first pass
+            __iter_in_ptr = __iter_out_ptr;
+            __iter_out_ptr = (__iter_in_ptr == __scratch_mem_1) ? __scratch_mem_2 : __scratch_mem_1;
+        }
+        if (i == __n_passes - 1) // if last iter, set final output
+            __iter_out_ptr = __res;
+
+        __reduce_iter<__work_group_size, __sub_group_size, _Tp>(Q, __iter_n, __reduce_op, __transform_op, __init, __input, __res);
+        __iter_n = __calc_reduce_output_size<__work_group_size>(__iter_n);
+    }
+    return e;
+}
+
 // Parallel_transform_reduce for a small arrays using a single work group.
 // Transforms and reduces __work_group_size * __iters_per_work_item elements.
 template <::std::uint16_t __work_group_size, ::std::uint8_t __iters_per_work_item, typename _Tp, typename _KernelName>
@@ -126,7 +301,6 @@ struct __parallel_transform_reduce_small_submitter<__work_group_size, __iters_pe
                                                     __init, __temp_local, __res_acc, __rngs...);
                 });
         });
-
         return __future(__reduce_event, __res);
     }
 }; // struct __parallel_transform_reduce_small_submitter
