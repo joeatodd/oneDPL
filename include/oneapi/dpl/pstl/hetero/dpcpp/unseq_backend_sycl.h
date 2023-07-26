@@ -186,44 +186,6 @@ struct __init_processing
 
 // Load elements consecutively from global memory, transform them, and apply a local reduction. Each local result is
 // stored in local memory.
-// template <typename _ExecutionPolicy, ::std::uint8_t __iters_per_work_item, typename _Operation1, typename _Operation2>
-// struct transform_reduce
-// {
-//     _Operation1 __binary_op;
-//     _Operation2 __unary_op;
-// 
-//     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
-//     void
-//     operator()(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
-//                const _Acc&... __acc) const
-//     {
-//         auto __global_idx = __item_id.get_global_id(0);
-//         auto __local_idx = __item_id.get_local_id(0);
-//         const _Size __adjusted_global_id = __global_offset + __iters_per_work_item * __global_idx;
-//         const _Size __adjusted_n = __global_offset + __n;
-//         // Add neighbour to the current __local_mem
-//         if (__adjusted_global_id + __iters_per_work_item < __adjusted_n)
-//         {
-//             // Keep these statements in the same scope to allow for better memory alignment
-//             typename _AccLocal::value_type __res = __unary_op(__adjusted_global_id, __acc...);
-//             _ONEDPL_PRAGMA_UNROLL
-//             for (_Size __i = 1; __i < __iters_per_work_item; ++__i)
-//                 __res = __binary_op(__res, __unary_op(__adjusted_global_id + __i, __acc...));
-//             __local_mem[__local_idx] = __res;
-//         }
-//         else if (__adjusted_global_id < __adjusted_n)
-//         {
-//             const _Size __items_to_process = __adjusted_n - __adjusted_global_id;
-//             // Keep these statements in the same scope to allow for better memory alignment
-//             typename _AccLocal::value_type __res = __unary_op(__adjusted_global_id, __acc...);
-//             for (_Size __i = 1; __i < __items_to_process; ++__i)
-//                 __res = __binary_op(__res, __unary_op(__adjusted_global_id + __i, __acc...));
-//             __local_mem[__local_idx] = __res;
-//         }
-//     }
-// };
-
-// Coalesced non-sequential impl
 template <typename _ExecutionPolicy, ::std::uint8_t __iters_per_work_item, typename _Operation1, typename _Operation2>
 struct transform_reduce
 {
@@ -237,32 +199,70 @@ struct transform_reduce
     {
         auto __global_idx = __item_id.get_global_id(0);
         auto __local_idx = __item_id.get_local_id(0);
-        const _Size __stride = __item_id.get_local_range(0);
-
-        const _Size __adjusted_global_id = __global_offset + __global_idx + __stride * __iters_per_work_item * __item_id.get_group_linear_id();
+        const _Size __adjusted_global_id = __global_offset + __iters_per_work_item * __global_idx;
         const _Size __adjusted_n = __global_offset + __n;
-        // Coalesced load and reduce from global memory
-        if (__adjusted_global_id + __stride * __iters_per_work_item < __adjusted_n)
+        // Add neighbour to the current __local_mem
+        if (__adjusted_global_id + __iters_per_work_item < __adjusted_n)
         {
             // Keep these statements in the same scope to allow for better memory alignment
             typename _AccLocal::value_type __res = __unary_op(__adjusted_global_id, __acc...);
             _ONEDPL_PRAGMA_UNROLL
             for (_Size __i = 1; __i < __iters_per_work_item; ++__i)
-                __res = __binary_op(__res, __unary_op(__adjusted_global_id + __stride * __i, __acc...));
+                __res = __binary_op(__res, __unary_op(__adjusted_global_id + __i, __acc...));
             __local_mem[__local_idx] = __res;
         }
         else if (__adjusted_global_id < __adjusted_n)
         {
-            // TODO: simplify to not use floats
-            const _Size __items_to_process = std::max(int(floor(float(__adjusted_n - __adjusted_global_id - 1)/__stride)) + 1, 0);
+            const _Size __items_to_process = __adjusted_n - __adjusted_global_id;
             // Keep these statements in the same scope to allow for better memory alignment
             typename _AccLocal::value_type __res = __unary_op(__adjusted_global_id, __acc...);
             for (_Size __i = 1; __i < __items_to_process; ++__i)
-                __res = __binary_op(__res, __unary_op(__adjusted_global_id + __stride * __i, __acc...));
+                __res = __binary_op(__res, __unary_op(__adjusted_global_id + __i, __acc...));
             __local_mem[__local_idx] = __res;
         }
     }
 };
+
+// Coalesced non-sequential impl
+// template <typename _ExecutionPolicy, ::std::uint8_t __iters_per_work_item, typename _Operation1, typename _Operation2>
+// struct transform_reduce
+// {
+//     _Operation1 __binary_op;
+//     _Operation2 __unary_op;
+// 
+//     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
+//     void
+//     operator()(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
+//                const _Acc&... __acc) const
+//     {
+//         auto __global_idx = __item_id.get_global_id(0);
+//         auto __local_idx = __item_id.get_local_id(0);
+//         const _Size __stride = __item_id.get_local_range(0);
+// 
+//         const _Size __adjusted_global_id = __global_offset + __global_idx + __stride * __iters_per_work_item * __item_id.get_group_linear_id();
+//         const _Size __adjusted_n = __global_offset + __n;
+//         // Coalesced load and reduce from global memory
+//         if (__adjusted_global_id + __stride * __iters_per_work_item < __adjusted_n)
+//         {
+//             // Keep these statements in the same scope to allow for better memory alignment
+//             typename _AccLocal::value_type __res = __unary_op(__adjusted_global_id, __acc...);
+//             _ONEDPL_PRAGMA_UNROLL
+//             for (_Size __i = 1; __i < __iters_per_work_item; ++__i)
+//                 __res = __binary_op(__res, __unary_op(__adjusted_global_id + __stride * __i, __acc...));
+//             __local_mem[__local_idx] = __res;
+//         }
+//         else if (__adjusted_global_id < __adjusted_n)
+//         {
+//             // TODO: simplify to not use floats
+//             const _Size __items_to_process = std::max(int(floor(float(__adjusted_n - __adjusted_global_id - 1)/__stride)) + 1, 0);
+//             // Keep these statements in the same scope to allow for better memory alignment
+//             typename _AccLocal::value_type __res = __unary_op(__adjusted_global_id, __acc...);
+//             for (_Size __i = 1; __i < __items_to_process; ++__i)
+//                 __res = __binary_op(__res, __unary_op(__adjusted_global_id + __stride * __i, __acc...));
+//             __local_mem[__local_idx] = __res;
+//         }
+//     }
+// };
 
 // Probably don't want to always inline this
 // Reduces __iters_per_work_item elements from global memory and returns the value

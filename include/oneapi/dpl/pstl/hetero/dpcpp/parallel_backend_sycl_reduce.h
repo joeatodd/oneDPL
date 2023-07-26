@@ -573,8 +573,8 @@ struct __parallel_transform_reduce_impl
 template <typename _Tp, typename _ReduceOp, typename _TransformOp, typename _ExecutionPolicy, typename _InitType,
           oneapi::dpl::__internal::__enable_if_device_execution_policy<_ExecutionPolicy, int> = 0, typename... _Ranges>
 auto
-__parallel_transform_reduce(_ExecutionPolicy&& __exec, _ReduceOp __reduce_op, _TransformOp __transform_op,
-                            _InitType __init, _Ranges&&... __rngs)
+__parallel_transform_reduce_1(_ExecutionPolicy&& __exec, _ReduceOp __reduce_op, _TransformOp __transform_op,
+                            _InitType __init, std::false_type /*has_known_identity*/, _Ranges&&... __rngs)
 {
     auto __n = oneapi::dpl::__ranges::__get_first_range_size(__rngs...);
     assert(__n > 0);
@@ -668,6 +668,24 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _ReduceOp __reduce_op, _T
     return __parallel_transform_reduce_impl<_Tp, 32>::submit(::std::forward<_ExecutionPolicy>(__exec), __n,
                                                              __work_group_size, __reduce_op, __transform_op, __init,
                                                              ::std::forward<_Ranges>(__rngs)...);
+}
+
+template <typename _Tp, typename _ReduceOp, typename _TransformOp, typename _ExecutionPolicy, typename _InitType,
+          oneapi::dpl::__internal::__enable_if_device_execution_policy<_ExecutionPolicy, int> = 0, typename... _Ranges>
+auto
+__parallel_transform_reduce_1(_ExecutionPolicy&& __exec, _ReduceOp __reduce_op, _TransformOp __transform_op,
+                            _InitType __init, std::true_type /*has_known_identity*/, _Ranges&&... __rngs)
+{
+    auto __n = oneapi::dpl::__ranges::__get_first_range_size(__rngs...);
+    __reduce_driver<256, 32, _Tp>(__exec.queue(), __n, __reduce_op, __transform_op, __init, __rngs...);
+}
+
+template <typename _Tp, typename _ReduceOp, typename _TransformOp, typename _ExecutionPolicy, typename _InitType,
+          oneapi::dpl::__internal::__enable_if_device_execution_policy<_ExecutionPolicy, int> = 0, typename... _Ranges>
+auto
+__parallel_transform_reduce(_ExecutionPolicy&& __exec, _ReduceOp __reduce_op, _TransformOp __transform_op,
+                            _InitType __init, _Ranges&&... __rngs) {
+    return __parallel_transform_reduce_1<_Tp>(__exec, __reduce_op, __transform_op, __init, unseq_backend::__has_known_identity<_ReduceOp, _Tp>{}, __rngs...);
 }
 
 } // namespace __par_backend_hetero
