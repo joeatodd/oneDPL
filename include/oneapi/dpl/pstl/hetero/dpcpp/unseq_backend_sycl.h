@@ -200,10 +200,11 @@ struct transform_reduce
         auto __global_idx = __item_id.get_global_id(0);
         auto __local_idx = __item_id.get_local_id(0);
         const _Size __stride = __item_id.get_local_range(0);
-      
-        const _Size __adjusted_global_id = __global_offset + __global_idx + __stride * __iters_per_work_item * __item_id.get_group_linear_id();
+
+        const _Size __adjusted_global_id =
+            __global_offset + __stride * __iters_per_work_item * __item_id.get_group_linear_id() + __local_idx;
         const _Size __adjusted_n = __global_offset + __n;
-      
+
         // Coalesced load and reduce from global memory
         // TODO: consider branch divergence across subgroup
         if (__adjusted_global_id + __stride * __iters_per_work_item < __adjusted_n)
