@@ -416,7 +416,7 @@ struct __parallel_transform_reduce_impl
 // Mid-sized arrays use two tree reductions with independent __iters_per_work_item.
 // Big arrays are processed with a recursive tree reduction. __work_group_size * __iters_per_work_item elements are
 // reduced in each step.
-template <typename _Tp, typename _ReduceOp, typename _TransformOp, typename _ExecutionPolicy, typename _InitType,
+template <typename _Tp, typename _ReduceOp, typename _TransformOp, bool _isComm, typename _ExecutionPolicy, typename _InitType,
           oneapi::dpl::__internal::__enable_if_device_execution_policy<_ExecutionPolicy, int> = 0, typename... _Ranges>
 auto
 __parallel_transform_reduce(_ExecutionPolicy&& __exec, _ReduceOp __reduce_op, _TransformOp __transform_op,
