@@ -186,7 +186,7 @@ struct __init_processing
 
 // Load elements consecutively from global memory, transform them, and apply a local reduction. Each local result is
 // stored in local memory.
-template <typename _ExecutionPolicy, ::std::uint8_t __iters_per_work_item, typename _Operation1, typename _Operation2, bool is_coal>
+template <typename _ExecutionPolicy, ::std::uint8_t __iters_per_work_item, typename _Operation1, typename _Operation2, bool _isComm>
 struct transform_reduce
 {
     _Operation1 __binary_op;
@@ -261,9 +261,27 @@ struct transform_reduce
     operator()(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
                const _Acc&... __acc) const
     {
-        if constexpr(is_coal)
+        if constexpr(_isComm)
             return coal_impl(__item_id, __n, __global_offset, __local_mem, __acc...);
         return seq_impl(__item_id, __n, __global_offset, __local_mem, __acc...);
+    }
+
+    template <typename _Size>
+    _Size
+    output_size(const _Size __n, ::std::uint16_t __work_group_size) const // TODO: not having the wg size at compile time could be a perf issue?
+    {
+        if constexpr (_isComm)
+        {
+            _Size temp_val = __n % (__work_group_size * __iters_per_work_item); // remainder
+            temp_val =
+                ((temp_val > __work_group_size) ? __work_group_size : temp_val); // min(temp_val, work_group_size)
+
+            return (__n / (__work_group_size * __iters_per_work_item)) * __work_group_size + temp_val;
+        }
+        else
+        {
+            return oneapi::dpl::__internal::__dpl_ceiling_div(__n, __iters_per_work_item);
+        }
     }
 };
 
