@@ -282,7 +282,7 @@ __parallel_transform_reduce_mid_impl(_ExecutionPolicy&& __exec, _Size __n, _Redu
 }
 
 // General implementation using a tree reduction
-template <typename _Tp, ::std::uint8_t __iters_per_work_item>
+template <typename _Tp, ::std::uint8_t __iters_per_work_item, bool _isComm>
 struct __parallel_transform_reduce_impl
 {
     template <typename _ExecutionPolicy, typename _Size, typename _ReduceOp, typename _TransformOp, typename _InitType,
@@ -299,10 +299,10 @@ struct __parallel_transform_reduce_impl
             __reduce_kernel, _CustomName, _ReduceOp, _TransformOp, _NoOpFunctor, _Ranges...>;
 
         auto __transform_pattern1 =
-            unseq_backend::transform_reduce<_ExecutionPolicy, __iters_per_work_item, _ReduceOp, _TransformOp, false /*_isComm*/>{
+            unseq_backend::transform_reduce<_ExecutionPolicy, __iters_per_work_item, _ReduceOp, _TransformOp, _isComm>{
                 __reduce_op, __transform_op};
         auto __transform_pattern2 =
-            unseq_backend::transform_reduce<_ExecutionPolicy, __iters_per_work_item, _ReduceOp, _NoOpFunctor, false /*_isComm*/>{
+            unseq_backend::transform_reduce<_ExecutionPolicy, __iters_per_work_item, _ReduceOp, _NoOpFunctor, _isComm>{
                 __reduce_op, _NoOpFunctor{}};
         auto __reduce_pattern = unseq_backend::reduce_over_group<_ExecutionPolicy, _ReduceOp, _Tp>{__reduce_op};
 
@@ -496,9 +496,9 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _ReduceOp __reduce_op, _T
         }
     }
     // Otherwise use a recursive tree reduction.
-    return __parallel_transform_reduce_impl<_Tp, 32>::submit(::std::forward<_ExecutionPolicy>(__exec), __n,
-                                                             __work_group_size, __reduce_op, __transform_op, __init,
-                                                             ::std::forward<_Ranges>(__rngs)...);
+    return __parallel_transform_reduce_impl<_Tp, 32, _isComm>::submit(::std::forward<_ExecutionPolicy>(__exec), __n,
+                                                                      __work_group_size, __reduce_op, __transform_op,
+                                                                      __init, ::std::forward<_Ranges>(__rngs)...);
 }
 
 } // namespace __par_backend_hetero
