@@ -233,26 +233,49 @@ struct transform_reduce
     {
         auto __global_idx = __item_id.get_global_id(0);
         auto __local_idx = __item_id.get_local_id(0);
-        const _Size __adjusted_global_id = __global_offset + __iters_per_work_item * __global_idx;
+        const _Size __stride = __item_id.get_local_range(0);
+
+        const _Size __group_start_idx =
+            __global_offset + __item_id.get_group_linear_id() * __stride * __iters_per_work_item;
+        const _Size __adjusted_global_id = __group_start_idx + __local_idx;
+
         const _Size __adjusted_n = __global_offset + __n;
-        // Add neighbour to the current __local_mem
-        if (__adjusted_global_id + __iters_per_work_item < __adjusted_n)
+
+
+        // TODO: add non-range-checked version
+        const _Size __items_to_process =
+            std::min(static_cast<_Size>(oneapi::dpl::__internal::__dpl_ceiling_div(__adjusted_n - __group_start_idx, __stride)),
+                     static_cast<_Size>(__iters_per_work_item));
+
+        // 1. load __stride elements into 1st half of local mem
+        if (__adjusted_global_id < __adjusted_n)
+            __local_mem[__local_idx] = __unary_op(__adjusted_global_id, __acc...);
+
+        for (_Size __i = 1; __i < __items_to_process; ++__i)
         {
-            // Keep these statements in the same scope to allow for better memory alignment
-            typename _AccLocal::value_type __res = __unary_op(__adjusted_global_id, __acc...);
-            _ONEDPL_PRAGMA_UNROLL
-            for (_Size __i = 1; __i < __iters_per_work_item; ++__i)
-                __res = __binary_op(__res, __unary_op(__adjusted_global_id + __i, __acc...));
-            __local_mem[__local_idx] = __res;
-        }
-        else if (__adjusted_global_id < __adjusted_n)
-        {
-            const _Size __items_to_process = __adjusted_n - __adjusted_global_id;
-            // Keep these statements in the same scope to allow for better memory alignment
-            typename _AccLocal::value_type __res = __unary_op(__adjusted_global_id, __acc...);
-            for (_Size __i = 1; __i < __items_to_process; ++__i)
-                __res = __binary_op(__res, __unary_op(__adjusted_global_id + __i, __acc...));
-            __local_mem[__local_idx] = __res;
+            // 2. load next __stride elements into 2nd half of local mem
+            if(__group_start_idx + __stride * __i + __local_idx < __adjusted_n)
+                __local_mem[__local_idx + __stride] = __unary_op(__adjusted_global_id + __stride * __i, __acc...);
+            // 3. reduce local_mem in order from 2*__stride elems to __stride elems
+            //TODO: deal with bank conflicts here
+            __dpl_sycl::__group_barrier(__item_id);
+
+            // 3 cases:
+            // 1. totally in range, do a binary reduction into __res, then write to local mem
+            // 2. totally out of range, do nothing
+            // 3. 1st value in range, load it to __res, write to local mem
+            const _Size __last_idx = __group_start_idx + (__i - 1) * __stride + __local_idx * 2 + 1;
+            bool in_range = __last_idx < __adjusted_n;
+            bool half_in_range = __last_idx <= __adjusted_n;
+            typename _AccLocal::value_type __res;
+            if (half_in_range)
+            {
+                __res = in_range ? __binary_op(__local_mem[2 * __local_idx], __local_mem[2 * __local_idx + 1])
+                                 : __local_mem[2 * __local_idx];
+            }
+            __dpl_sycl::__group_barrier(__item_id);
+            if (half_in_range)
+                __local_mem[__local_idx] = __res;
         }
     }
 
@@ -268,20 +291,29 @@ struct transform_reduce
 
     template <typename _Size>
     _Size
-    output_size(const _Size __n, ::std::uint16_t __work_group_size) const // TODO: not having the wg size at compile time could be a perf issue?
+    output_size(_Size __n, ::std::uint16_t __work_group_size) const // TODO: not having the wg size at compile time could be a perf issue?
     {
+        _Size __items_per_work_group = __work_group_size * __iters_per_work_item;
+        _Size __full_group_contrib = (__n / __items_per_work_group) * __work_group_size;
+        _Size __last_wg_remainder = __n % __items_per_work_group;
+
+        _Size __last_wg_contrib;
         if constexpr (_isComm)
         {
-            _Size temp_val = __n % (__work_group_size * __iters_per_work_item); // remainder
-            temp_val =
-                ((temp_val > __work_group_size) ? __work_group_size : temp_val); // min(temp_val, work_group_size)
-
-            return (__n / (__work_group_size * __iters_per_work_item)) * __work_group_size + temp_val;
+            __last_wg_contrib = std::min(__last_wg_remainder, __work_group_size);
         }
         else
         {
-            return oneapi::dpl::__internal::__dpl_ceiling_div(__n, __iters_per_work_item);
+            _Size __last_stride_remainder = __n % __work_group_size;
+            bool __less_than_1_stride = (__last_wg_remainder / __work_group_size) == 0;
+            __last_wg_contrib =
+                __less_than_1_stride
+                    ? __last_stride_remainder
+                    : oneapi::dpl::__internal::__dpl_ceiling_div(__work_group_size + __last_stride_remainder, 2);
         }
+        return __full_group_contrib + __last_wg_contrib;
+    }
+
     ::std::size_t local_mem_req(::std::uint16_t __work_group_size) const
     {
         if constexpr (_isComm)
