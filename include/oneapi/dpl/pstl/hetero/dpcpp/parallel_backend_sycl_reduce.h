@@ -55,10 +55,11 @@ __work_group_reduce_kernel(const _NDItemId __item_id, const _Size __n, _Transfor
                            const _Res& __res_acc, const _Acc&... __acc)
 {
     auto __local_idx = __item_id.get_local_id(0);
+    auto __group_size = __item_id.get_local_range().size();
     // 1. Initialization (transform part). Fill local memory
     __transform_pattern(__item_id, __n, /*global_offset*/ (_Size)0, __local_mem, __acc...);
     __dpl_sycl::__group_barrier(__item_id);
-    const _Size __n_items = __transform_pattern.output_size(__n, __item_id.get_local_range().size());
+    const _Size __n_items = __transform_pattern.output_size(__n, __group_size);
     // 2. Reduce within work group using local memory
     _Tp __result = __reduce_pattern(__item_id, __n_items, __local_mem);
     if (__local_idx == 0)
@@ -78,10 +79,11 @@ __device_reduce_kernel(const _NDItemId __item_id, const _Size __n, _TransformPat
 {
     auto __local_idx = __item_id.get_local_id(0);
     auto __group_idx = __item_id.get_group(0);
+    auto __group_size = __item_id.get_local_range().size();
     // 1. Initialization (transform part). Fill local memory
     __transform_pattern(__item_id, __n, /*global_offset*/ (_Size)0, __local_mem, __acc...);
     __dpl_sycl::__group_barrier(__item_id);
-    const _Size __n_items = __transform_pattern.output_size(__n, __item_id.get_local_range().size());
+    const _Size __n_items = __transform_pattern.output_size(__n, __group_size);
     // 2. Reduce within work group using local memory
     _Tp __result = __reduce_pattern(__item_id, __n_items, __local_mem);
     if (__local_idx == 0)
