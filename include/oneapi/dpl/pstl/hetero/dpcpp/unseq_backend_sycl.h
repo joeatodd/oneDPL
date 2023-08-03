@@ -194,7 +194,7 @@ struct transform_reduce
 
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
     void
-    coal_impl(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
+    nonseq_impl(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
                const _Acc&... __acc) const {
 
         auto __global_idx = __item_id.get_global_id(0);
@@ -202,7 +202,7 @@ struct transform_reduce
         const _Size __stride = __item_id.get_local_range(0);
 
         const _Size __adjusted_global_id =
-            __global_offset + __stride * __iters_per_work_item * __item_id.get_group_linear_id() + __local_idx;
+            __global_offset + __item_id.get_group_linear_id() * __stride * __iters_per_work_item + __local_idx;
         const _Size __adjusted_n = __global_offset + __n;
 
         // Coalesced load and reduce from global memory
@@ -262,7 +262,7 @@ struct transform_reduce
                const _Acc&... __acc) const
     {
         if constexpr(_isComm)
-            return coal_impl(__item_id, __n, __global_offset, __local_mem, __acc...);
+            return nonseq_impl(__item_id, __n, __global_offset, __local_mem, __acc...);
         return seq_impl(__item_id, __n, __global_offset, __local_mem, __acc...);
     }
 
