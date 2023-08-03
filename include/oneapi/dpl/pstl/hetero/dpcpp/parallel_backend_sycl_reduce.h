@@ -121,7 +121,8 @@ struct __parallel_transform_reduce_small_submitter<__work_group_size, __iters_pe
         sycl::event __reduce_event = __exec.queue().submit([&, __n](sycl::handler& __cgh) {
             oneapi::dpl::__ranges::__require_access(__cgh, __rngs...); // get an access to data under SYCL buffer
             sycl::accessor __res_acc{__res, __cgh, sycl::write_only, __dpl_sycl::__no_init{}};
-            __dpl_sycl::__local_accessor<_Tp> __temp_local(sycl::range<1>(__work_group_size), __cgh);
+                std::max(__transform_pattern.local_mem_req(), __reduce_pattern.local_mem_req());
+            __dpl_sycl::__local_accessor<_Tp> __temp_local(sycl::range<1>(__local_mem_size), __cgh);
             __cgh.parallel_for<_Name...>(
                 sycl::nd_range<1>(sycl::range<1>(__work_group_size), sycl::range<1>(__work_group_size)),
                 [=](sycl::nd_item<1> __item_id) {
@@ -181,7 +182,9 @@ struct __parallel_transform_reduce_device_kernel_submitter<__work_group_size, __
         return __exec.queue().submit([&, __n](sycl::handler& __cgh) {
             oneapi::dpl::__ranges::__require_access(__cgh, __rngs...); // get an access to data under SYCL buffer
             sycl::accessor __temp_acc{__temp, __cgh, sycl::write_only, __dpl_sycl::__no_init{}};
-            __dpl_sycl::__local_accessor<_Tp> __temp_local(sycl::range<1>(__work_group_size), __cgh);
+            ::std::size_t __local_mem_size =
+                std::max(__transform_pattern.local_mem_req(), __reduce_pattern.local_mem_req());
+            __dpl_sycl::__local_accessor<_Tp> __temp_local(sycl::range<1>(__local_mem_size), __cgh);
             __cgh.parallel_for<_KernelName...>(
                 sycl::nd_range<1>(sycl::range<1>(__n_groups * __work_group_size), sycl::range<1>(__work_group_size)),
                 [=](sycl::nd_item<1> __item_id) {
@@ -234,7 +237,9 @@ struct __parallel_transform_reduce_work_group_kernel_submitter<__work_group_size
 
             sycl::accessor __temp_acc{__temp, __cgh, sycl::read_only};
             sycl::accessor __res_acc{__res, __cgh, sycl::write_only, __dpl_sycl::__no_init{}};
-            __dpl_sycl::__local_accessor<_Tp> __temp_local(sycl::range<1>(__work_group_size2), __cgh);
+            ::std::size_t __local_mem_size =
+                std::max(__transform_pattern.local_mem_req(), __reduce_pattern.local_mem_req());
+            __dpl_sycl::__local_accessor<_Tp> __temp_local(sycl::range<1>(__local_mem_size), __cgh);
 
             __cgh.parallel_for<_KernelName...>(
                 sycl::nd_range<1>(sycl::range<1>(__work_group_size2), sycl::range<1>(__work_group_size2)),
@@ -340,7 +345,9 @@ struct __parallel_transform_reduce_impl
                 oneapi::dpl::__ranges::__require_access(__cgh, __rngs...); // get an access to data under SYCL buffer
                 sycl::accessor __temp_acc{__temp, __cgh, sycl::read_write};
                 sycl::accessor __res_acc{__res, __cgh, sycl::write_only, __dpl_sycl::__no_init{}};
-                __dpl_sycl::__local_accessor<_Tp> __temp_local(sycl::range<1>(__work_group_size), __cgh);
+                ::std::size_t __local_mem_size =
+                    std::max(__transform_pattern.local_mem_req(), __reduce_pattern.local_mem_req());
+                __dpl_sycl::__local_accessor<_Tp> __temp_local(sycl::range<1>(__local_mem_size), __cgh);
 #if _ONEDPL_COMPILE_KERNEL && _ONEDPL_KERNEL_BUNDLE_PRESENT
                 __cgh.use_kernel_bundle(__kernel.get_kernel_bundle());
 #endif

@@ -282,6 +282,12 @@ struct transform_reduce
         {
             return oneapi::dpl::__internal::__dpl_ceiling_div(__n, __iters_per_work_item);
         }
+    ::std::size_t local_mem_req(::std::uint16_t __work_group_size) const
+    {
+        if constexpr (_isComm)
+            return __work_group_size;
+        else
+            return 2 * __work_group_size;
     }
 };
 
@@ -343,6 +349,12 @@ struct reduce_over_group
     apply_init(const _InitType& __init, _Result&& __result) const
     {
         __init_processing<_Tp>{}(__init, __result, __bin_op1);
+    }
+
+    ::std::size_t
+    local_mem_req(::std::uint16_t __work_group_size) const
+    {
+        return __work_group_size;
     }
 };
 
