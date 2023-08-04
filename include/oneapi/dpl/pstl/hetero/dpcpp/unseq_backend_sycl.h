@@ -234,8 +234,8 @@ struct transform_reduce
     seq_impl(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
              const _Acc&... __acc) const
     {
-        auto __global_idx = __item_id.get_global_id(0);
-        auto __local_idx = __item_id.get_local_id(0);
+        const _Size __global_idx = __item_id.get_global_id(0);
+        const _Size __local_idx = __item_id.get_local_id(0);
         const _Size __stride = __item_id.get_local_range(0);
 
         const _Size __group_start_idx =
@@ -244,41 +244,63 @@ struct transform_reduce
 
         const _Size __adjusted_n = __global_offset + __n;
 
+        bool __check_range = (__group_start_idx + __stride * __iters_per_work_item) > __adjusted_n;
 
-        // TODO: add non-range-checked version
-        const _Size __items_to_process =
-            std::min(static_cast<_Size>(oneapi::dpl::__internal::__dpl_ceiling_div(__adjusted_n - __group_start_idx, __stride)),
-                     static_cast<_Size>(__iters_per_work_item));
-
-        // 1. load __stride elements into 1st half of local mem
-        if (__adjusted_global_id < __adjusted_n)
-            __local_mem[__local_idx] = __unary_op(__adjusted_global_id, __acc...);
-
-        for (_Size __i = 1; __i < __items_to_process; ++__i)
+        if (!__check_range)
         {
-            // 2. load next __stride elements into 2nd half of local mem
-            if(__group_start_idx + __stride * __i + __local_idx < __adjusted_n)
-                __local_mem[__local_idx + __stride] = __unary_op(__adjusted_global_id + __stride * __i, __acc...);
-            // 3. reduce local_mem in order from 2*__stride elems to __stride elems
-            //TODO: deal with bank conflicts here
-            __dpl_sycl::__group_barrier(__item_id);
-
-            // 3 cases:
-            // 1. totally in range, do a binary reduction into __res, then write to local mem
-            // 2. totally out of range, do nothing
-            // 3. 1st value in range, load it to __res, write to local mem
-            const _Size __last_idx = __group_start_idx + (__i - 1) * __stride + __local_idx * 2 + 1;
-            bool in_range = __last_idx < __adjusted_n;
-            bool half_in_range = __last_idx <= __adjusted_n;
-            typename _AccLocal::value_type __res;
-            if (half_in_range)
+            // 1. load first __stride elements into 1st half of local mem
+            __local_mem[__local_idx] = __unary_op(__adjusted_global_id, __acc...);
+            _ONEDPL_PRAGMA_UNROLL
+            for (_Size __i = 1; __i < __iters_per_work_item; ++__i)
             {
-                __res = in_range ? __binary_op(__local_mem[2 * __local_idx], __local_mem[2 * __local_idx + 1])
-                                 : __local_mem[2 * __local_idx];
-            }
-            __dpl_sycl::__group_barrier(__item_id);
-            if (half_in_range)
+                // 2. load next __stride elements into 2nd half of local mem
+                __local_mem[__local_idx + __stride] = __unary_op(__adjusted_global_id + __stride * __i, __acc...);
+                __dpl_sycl::__group_barrier(__item_id);
+
+                // 3. reduce local_mem in order from 2*__stride elems to __stride elems
+                // TODO: deal with bank conflicts here
+                typename _AccLocal::value_type __res =
+                    __binary_op(__local_mem[2 * __local_idx], __local_mem[2 * __local_idx + 1]);
+                __dpl_sycl::__group_barrier(__item_id);
                 __local_mem[__local_idx] = __res;
+            }
+        }
+        else
+        {
+            const _Size __items_to_process =
+                std::min(oneapi::dpl::__internal::__dpl_ceiling_div(__adjusted_n - __group_start_idx, __stride),
+                         static_cast<_Size>(__iters_per_work_item));
+
+            // 1. load first __stride elements into 1st half of local mem
+            if (__adjusted_global_id < __adjusted_n)
+                __local_mem[__local_idx] = __unary_op(__adjusted_global_id, __acc...);
+
+            for (_Size __i = 1; __i < __items_to_process; ++__i)
+            {
+                // 2. load next __stride elements into 2nd half of local mem
+                if (__group_start_idx + __stride * __i + __local_idx < __adjusted_n)
+                    __local_mem[__local_idx + __stride] = __unary_op(__adjusted_global_id + __stride * __i, __acc...);
+                __dpl_sycl::__group_barrier(__item_id);
+
+                // 3. reduce local_mem in order from 2*__stride elems to __stride elems
+                // TODO: deal with bank conflicts here
+                // 3 cases:
+                // 1. totally in range, do a binary reduction into __res, then write to local mem
+                // 2. totally out of range, do nothing
+                // 3. 1st value in range, load it to __res, write to local mem
+                const _Size __last_idx = __group_start_idx + (__i - 1) * __stride + __local_idx * 2 + 1;
+                bool in_range = __last_idx < __adjusted_n;
+                bool half_in_range = __last_idx <= __adjusted_n;
+                typename _AccLocal::value_type __res;
+                if (half_in_range)
+                {
+                    __res = in_range ? __binary_op(__local_mem[2 * __local_idx], __local_mem[2 * __local_idx + 1])
+                                     : __local_mem[2 * __local_idx];
+                }
+                __dpl_sycl::__group_barrier(__item_id);
+                if (half_in_range)
+                    __local_mem[__local_idx] = __res;
+            }
         }
     }
 
@@ -287,7 +309,7 @@ struct transform_reduce
     operator()(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
                const _Acc&... __acc) const
     {
-        if constexpr(_isComm)
+        if constexpr (_isComm)
             return nonseq_impl(__item_id, __n, __global_offset, __local_mem, __acc...);
         return seq_impl(__item_id, __n, __global_offset, __local_mem, __acc...);
     }
@@ -303,7 +325,7 @@ struct transform_reduce
         _Size __last_wg_contrib;
         if constexpr (_isComm)
         {
-            __last_wg_contrib = std::min(__last_wg_remainder, __work_group_size);
+            __last_wg_contrib = std::min(__last_wg_remainder, static_cast<_Size>(__work_group_size));
         }
         else
         {
