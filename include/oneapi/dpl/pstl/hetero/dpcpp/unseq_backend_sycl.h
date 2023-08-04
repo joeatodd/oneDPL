@@ -186,7 +186,8 @@ struct __init_processing
 
 // Load elements consecutively from global memory, transform them, and apply a local reduction. Each local result is
 // stored in local memory.
-template <typename _ExecutionPolicy, ::std::uint8_t __iters_per_work_item, typename _Operation1, typename _Operation2, bool _isComm>
+template <typename _ExecutionPolicy, ::std::uint8_t __iters_per_work_item, typename _Operation1, typename _Operation2,
+          bool _isComm>
 struct transform_reduce
 {
     _Operation1 __binary_op;
@@ -195,7 +196,8 @@ struct transform_reduce
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
     void
     nonseq_impl(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
-               const _Acc&... __acc) const {
+                const _Acc&... __acc) const
+    {
 
         auto __global_idx = __item_id.get_global_id(0);
         auto __local_idx = __item_id.get_local_id(0);
@@ -213,23 +215,24 @@ struct transform_reduce
             _ONEDPL_PRAGMA_UNROLL
             for (_Size __i = 1; __i < __iters_per_work_item; ++__i)
                 __res = __binary_op(__res, __unary_op(__adjusted_global_id + __stride * __i, __acc...));
-             __local_mem[__local_idx] = __res;
+            __local_mem[__local_idx] = __res;
         }
         else
         {
             // TODO: simplify to not use floats
-            const _Size __items_to_process = std::max(int(floor(float(__adjusted_n - __adjusted_global_id - 1)/__stride)) + 1, 0);
+            const _Size __items_to_process =
+                std::max(int(floor(float(__adjusted_n - __adjusted_global_id - 1) / __stride)) + 1, 0);
             typename _AccLocal::value_type __res = __unary_op(__adjusted_global_id, __acc...);
             for (_Size __i = 1; __i < __items_to_process; ++__i)
                 __res = __binary_op(__res, __unary_op(__adjusted_global_id + __stride * __i, __acc...));
-             __local_mem[__local_idx] = __res;
+            __local_mem[__local_idx] = __res;
         }
     }
 
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
     void
     seq_impl(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
-               const _Acc&... __acc) const
+             const _Acc&... __acc) const
     {
         auto __global_idx = __item_id.get_global_id(0);
         auto __local_idx = __item_id.get_local_id(0);
@@ -291,7 +294,7 @@ struct transform_reduce
 
     template <typename _Size>
     _Size
-    output_size(_Size __n, ::std::uint16_t __work_group_size) const // TODO: not having the wg size at compile time could be a perf issue?
+    output_size(_Size __n, ::std::uint16_t __work_group_size) const
     {
         _Size __items_per_work_group = __work_group_size * __iters_per_work_item;
         _Size __full_group_contrib = (__n / __items_per_work_group) * __work_group_size;
@@ -314,7 +317,8 @@ struct transform_reduce
         return __full_group_contrib + __last_wg_contrib;
     }
 
-    ::std::size_t local_mem_req(::std::uint16_t __work_group_size) const
+    ::std::size_t
+    local_mem_req(::std::uint16_t __work_group_size) const
     {
         if constexpr (_isComm)
             return __work_group_size;
