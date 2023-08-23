@@ -50,7 +50,7 @@ class __reduce_kernel;
 template <typename _Tp, typename _NDItemId, typename _Size, typename _TransformPattern, typename _ReducePattern,
           typename _InitType, typename _AccLocal, typename _Res, typename... _Acc>
 void
-__work_group_reduce_kernel(const _NDItemId __item_id, const _Size __n, _TransformPattern __transform_pattern,
+__work_group_reduce_kernel(const _NDItemId& __item_id, const _Size& __n, _TransformPattern __transform_pattern,
                            _ReducePattern __reduce_pattern, _InitType __init, const _AccLocal& __local_mem,
                            const _Res& __res_acc, const _Acc&... __acc)
 {
@@ -73,7 +73,7 @@ __work_group_reduce_kernel(const _NDItemId __item_id, const _Size __n, _Transfor
 template <typename _Tp, typename _NDItemId, typename _Size, typename _TransformPattern, typename _ReducePattern,
           typename _AccLocal, typename _Tmp, typename... _Acc>
 void
-__device_reduce_kernel(const _NDItemId __item_id, const _Size __n, _TransformPattern __transform_pattern,
+__device_reduce_kernel(const _NDItemId& __item_id, const _Size& __n, _TransformPattern __transform_pattern,
                        _ReducePattern __reduce_pattern, const _AccLocal& __local_mem, const _Tmp& __temp_acc,
                        const _Acc&... __acc)
 {

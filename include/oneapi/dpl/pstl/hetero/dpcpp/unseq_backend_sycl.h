@@ -195,7 +195,7 @@ struct transform_reduce
 
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
     void
-    nonseq_impl(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
+    nonseq_impl(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset, const _AccLocal& __local_mem,
                 const _Acc&... __acc) const
     {
 
@@ -231,11 +231,10 @@ struct transform_reduce
 
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
     void
-    seq_impl(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
+    seq_impl(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset, const _AccLocal& __local_mem,
              const _Acc&... __acc) const
     {
-        const _Size __global_idx = __item_id.get_global_id(0);
-        const _Size __local_idx = __item_id.get_local_id(0);
+        const _Size __global_idx = __item_id.get_global_id(0);        const _Size __local_idx = __item_id.get_local_id(0);
         const _Size __stride = __item_id.get_local_range(0);
 
         const _Size __group_start_idx =
@@ -306,7 +305,7 @@ struct transform_reduce
 
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
     void
-    operator()(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
+    operator()(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset, const _AccLocal& __local_mem,
                const _Acc&... __acc) const
     {
         if constexpr (_isComm)
@@ -316,7 +315,7 @@ struct transform_reduce
 
     template <typename _Size>
     _Size
-    output_size(_Size __n, ::std::uint16_t __work_group_size) const
+    output_size(const _Size& __n, const ::std::uint16_t& __work_group_size) const
     {
         _Size __items_per_work_group = __work_group_size * __iters_per_work_item;
         _Size __full_group_contrib = (__n / __items_per_work_group) * __work_group_size;
@@ -340,7 +339,7 @@ struct transform_reduce
     }
 
     ::std::size_t
-    local_mem_req(::std::uint16_t __work_group_size) const
+    local_mem_req(const ::std::uint16_t& __work_group_size) const
     {
         if constexpr (_isComm)
             return __work_group_size;
@@ -360,7 +359,7 @@ struct reduce_over_group
     // Reduce on local memory with subgroups
     template <typename _NDItemId, typename _Size, typename _AccLocal>
     _Tp
-    reduce_impl(const _NDItemId __item_id, const _Size __n, const _AccLocal& __local_mem,
+    reduce_impl(const _NDItemId& __item_id, const _Size& __n, const _AccLocal& __local_mem,
                 std::true_type /*has_known_identity*/) const
     {
         auto __local_idx = __item_id.get_local_id(0);
@@ -376,7 +375,7 @@ struct reduce_over_group
 
     template <typename _NDItemId, typename _Size, typename _AccLocal>
     _Tp
-    reduce_impl(const _NDItemId __item_id, const _Size __n, const _AccLocal& __local_mem,
+    reduce_impl(const _NDItemId& __item_id, const _Size& __n, const _AccLocal& __local_mem,
                 std::false_type /*has_known_identity*/) const
     {
         auto __local_idx = __item_id.get_local_id(0);
@@ -397,7 +396,7 @@ struct reduce_over_group
 
     template <typename _NDItemId, typename _Size, typename _AccLocal>
     _Tp
-    operator()(const _NDItemId __item_id, const _Size __n, const _AccLocal& __local_mem) const
+    operator()(const _NDItemId& __item_id, const _Size& __n, const _AccLocal& __local_mem) const
     {
         return reduce_impl(__item_id, __n, __local_mem, __has_known_identity<_BinaryOperation1, _Tp>{});
     }
@@ -410,7 +409,7 @@ struct reduce_over_group
     }
 
     ::std::size_t
-    local_mem_req(::std::uint16_t __work_group_size) const
+    local_mem_req(const ::std::uint16_t& __work_group_size) const
     {
         return __work_group_size;
     }
