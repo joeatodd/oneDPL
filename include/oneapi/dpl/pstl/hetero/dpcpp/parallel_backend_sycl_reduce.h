@@ -49,7 +49,7 @@ class __reduce_kernel;
 // Single work group kernel that transforms and reduces __n elements to the single result.
 template <typename _Tp, typename _NDItemId, typename _Size, typename _TransformPattern, typename _ReducePattern,
           typename _InitType, typename _AccLocal, typename _Res, typename... _Acc>
-void
+inline void
 __work_group_reduce_kernel(const _NDItemId& __item_id, const _Size& __n, _TransformPattern __transform_pattern,
                            _ReducePattern __reduce_pattern, _InitType __init, const _AccLocal& __local_mem,
                            const _Res& __res_acc, const _Acc&... __acc)
@@ -72,7 +72,7 @@ __work_group_reduce_kernel(const _NDItemId& __item_id, const _Size& __n, _Transf
 // Device kernel that transforms and reduces __n elements to the number of work groups preliminary results.
 template <typename _Tp, typename _NDItemId, typename _Size, typename _TransformPattern, typename _ReducePattern,
           typename _AccLocal, typename _Tmp, typename... _Acc>
-void
+inline void
 __device_reduce_kernel(const _NDItemId& __item_id, const _Size& __n, _TransformPattern __transform_pattern,
                        _ReducePattern __reduce_pattern, const _AccLocal& __local_mem, const _Tmp& __temp_acc,
                        const _Acc&... __acc)

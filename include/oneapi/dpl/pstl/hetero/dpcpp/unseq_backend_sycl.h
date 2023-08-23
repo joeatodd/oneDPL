@@ -194,7 +194,7 @@ struct transform_reduce
     _Operation2 __unary_op;
 
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
-    void
+    inline void
     nonseq_impl(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset, const _AccLocal& __local_mem,
                 const _Acc&... __acc) const
     {
@@ -230,7 +230,7 @@ struct transform_reduce
     }
 
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
-    void
+    inline void
     seq_impl(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset, const _AccLocal& __local_mem,
              const _Acc&... __acc) const
     {
@@ -304,7 +304,7 @@ struct transform_reduce
     }
 
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
-    void
+    inline void
     operator()(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset, const _AccLocal& __local_mem,
                const _Acc&... __acc) const
     {
@@ -338,7 +338,7 @@ struct transform_reduce
         return __full_group_contrib + __last_wg_contrib;
     }
 
-    ::std::size_t
+    inline ::std::size_t
     local_mem_req(const ::std::uint16_t& __work_group_size) const
     {
         if constexpr (_isComm)
@@ -358,7 +358,7 @@ struct reduce_over_group
 
     // Reduce on local memory with subgroups
     template <typename _NDItemId, typename _Size, typename _AccLocal>
-    _Tp
+    inline _Tp
     reduce_impl(const _NDItemId& __item_id, const _Size& __n, const _AccLocal& __local_mem,
                 std::true_type /*has_known_identity*/) const
     {
@@ -374,7 +374,7 @@ struct reduce_over_group
     }
 
     template <typename _NDItemId, typename _Size, typename _AccLocal>
-    _Tp
+    inline _Tp
     reduce_impl(const _NDItemId& __item_id, const _Size& __n, const _AccLocal& __local_mem,
                 std::false_type /*has_known_identity*/) const
     {
@@ -395,20 +395,20 @@ struct reduce_over_group
     }
 
     template <typename _NDItemId, typename _Size, typename _AccLocal>
-    _Tp
+    inline _Tp
     operator()(const _NDItemId& __item_id, const _Size& __n, const _AccLocal& __local_mem) const
     {
         return reduce_impl(__item_id, __n, __local_mem, __has_known_identity<_BinaryOperation1, _Tp>{});
     }
 
     template <typename _InitType, typename _Result>
-    void
+    inline void
     apply_init(const _InitType& __init, _Result&& __result) const
     {
         __init_processing<_Tp>{}(__init, __result, __bin_op1);
     }
 
-    ::std::size_t
+    inline ::std::size_t
     local_mem_req(const ::std::uint16_t& __work_group_size) const
     {
         return __work_group_size;
