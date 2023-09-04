@@ -395,7 +395,7 @@ struct reduce_over_group
 #else //ONEDPL_USE_SHUFFLE_ROG
 
     // Reduce on local memory with subgroups
-    // template <typename _NDItemId, typename _Size, typename _AccLocal>
+    template <typename _NDItemId, typename _Size, typename _AccLocal>
     inline _Tp
     reduce_impl(const _NDItemId& __item_id, const _Size& __n, const _AccLocal& __local_mem,
                 std::true_type) const
