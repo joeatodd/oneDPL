@@ -237,49 +237,56 @@ struct transform_reduce
         const _Size __global_idx = __item_id.get_global_id(0);        const _Size __local_idx = __item_id.get_local_id(0);
         const _Size __stride = __item_id.get_local_range(0);
 
+        const _Size __sg_idx = __item_id.get_sub_group().get_group_linear_id();
+        const _Size __sg_stride = __item_id.get_sub_group().get_local_range()[0];
+        const _Size __sg_local_idx = __item_id.get_sub_group().get_local_id()[0];
+
         const _Size __group_start_idx =
             __global_offset + __item_id.get_group_linear_id() * __stride * __iters_per_work_item;
-        const _Size __adjusted_global_id = __group_start_idx + __local_idx;
+        const _Size __sg_start_idx = 
+            __group_start_idx + __sg_idx * __sg_stride * __iters_per_work_item;
 
+        const _Size __adjusted_global_id = __sg_start_idx + __sg_local_idx;
         const _Size __adjusted_n = __global_offset + __n;
 
-        bool __check_range = (__group_start_idx + __stride * __iters_per_work_item) > __adjusted_n;
+        const _Size __sg_local_mem_offset = __sg_idx * __sg_stride * 2;
+
+        // TODO: this check could be improved, since we have no sync
+        bool __check_range = (__sg_start_idx + __sg_stride * __iters_per_work_item) > __adjusted_n;
 
         if (!__check_range)
         {
             // 1. load first __stride elements into 1st half of local mem
-            __local_mem[__local_idx] = __unary_op(__adjusted_global_id, __acc...);
+            __local_mem[__sg_local_mem_offset + __sg_local_idx] = __unary_op(__adjusted_global_id, __acc...);
             _ONEDPL_PRAGMA_UNROLL
             for (_Size __i = 1; __i < __iters_per_work_item; ++__i)
             {
                 // 2. load next __stride elements into 2nd half of local mem
-                __local_mem[__local_idx + __stride] = __unary_op(__adjusted_global_id + __stride * __i, __acc...);
-                __dpl_sycl::__group_barrier(__item_id);
+                __local_mem[__sg_local_mem_offset + __sg_local_idx + __sg_stride] = __unary_op(__adjusted_global_id + __sg_stride * __i, __acc...);
 
                 // 3. reduce local_mem in order from 2*__stride elems to __stride elems
                 // TODO: deal with bank conflicts here
                 typename _AccLocal::value_type __res =
-                    __binary_op(__local_mem[2 * __local_idx], __local_mem[2 * __local_idx + 1]);
-                __dpl_sycl::__group_barrier(__item_id);
-                __local_mem[__local_idx] = __res;
+                    __binary_op(__local_mem[__sg_local_mem_offset + 2 * __sg_local_idx], __local_mem[__sg_local_mem_offset + 2 * __sg_local_idx + 1]);
+                __local_mem[__sg_local_mem_offset + __sg_local_idx] = __res;
             }
         }
         else
         {
             const _Size __items_to_process =
-                std::min(oneapi::dpl::__internal::__dpl_ceiling_div(__adjusted_n - __group_start_idx, __stride),
+                std::min(oneapi::dpl::__internal::__dpl_ceiling_div(__adjusted_n - __sg_start_idx, __sg_stride),
                          static_cast<_Size>(__iters_per_work_item));
 
             // 1. load first __stride elements into 1st half of local mem
             if (__adjusted_global_id < __adjusted_n)
-                __local_mem[__local_idx] = __unary_op(__adjusted_global_id, __acc...);
+                __local_mem[__sg_local_mem_offset + __sg_local_idx] = __unary_op(__adjusted_global_id, __acc...);
 
             for (_Size __i = 1; __i < __items_to_process; ++__i)
             {
                 // 2. load next __stride elements into 2nd half of local mem
-                if (__group_start_idx + __stride * __i + __local_idx < __adjusted_n)
-                    __local_mem[__local_idx + __stride] = __unary_op(__adjusted_global_id + __stride * __i, __acc...);
-                __dpl_sycl::__group_barrier(__item_id);
+                if (__sg_start_idx + __sg_stride * __i + __sg_local_idx < __adjusted_n)
+                    __local_mem[__sg_local_mem_offset + __sg_local_idx + __sg_stride] = __unary_op(__adjusted_global_id + __sg_stride * __i, __acc...);
+                // __dpl_sycl::__group_barrier(__item_id);
 
                 // 3. reduce local_mem in order from 2*__stride elems to __stride elems
                 // TODO: deal with bank conflicts here
@@ -287,20 +294,23 @@ struct transform_reduce
                 // 1. totally in range, do a binary reduction into __res, then write to local mem
                 // 2. totally out of range, do nothing
                 // 3. 1st value in range, load it to __res, write to local mem
-                const _Size __last_idx = __group_start_idx + (__i - 1) * __stride + __local_idx * 2 + 1;
+                const _Size __last_idx = __sg_start_idx + (__i - 1) * __sg_stride + __sg_local_idx * 2 + 1;
                 bool in_range = __last_idx < __adjusted_n;
                 bool half_in_range = __last_idx <= __adjusted_n;
                 typename _AccLocal::value_type __res;
                 if (half_in_range)
                 {
-                    __res = in_range ? __binary_op(__local_mem[2 * __local_idx], __local_mem[2 * __local_idx + 1])
-                                     : __local_mem[2 * __local_idx];
+                    __res = in_range ? __binary_op(__local_mem[__sg_local_mem_offset + 2 * __sg_local_idx], __local_mem[__sg_local_mem_offset + 2 * __sg_local_idx + 1])
+                                     : __local_mem[__sg_local_mem_offset + 2 * __sg_local_idx];
                 }
-                __dpl_sycl::__group_barrier(__item_id);
+                //  __dpl_sycl::__group_barrier(__item_id);
                 if (half_in_range)
-                    __local_mem[__local_idx] = __res;
+                    __local_mem[__sg_local_mem_offset + __sg_local_idx] = __res;
             }
         }
+        typename _AccLocal::value_type __final_res = __local_mem[__sg_local_mem_offset + __sg_local_idx];
+        sycl::group_barrier(__item_id.get_group());
+        __local_mem[__local_idx] = __final_res;
     }
 
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
@@ -317,25 +327,31 @@ struct transform_reduce
     _Size
     output_size(const _Size& __n, const ::std::uint16_t& __work_group_size) const
     {
-        _Size __items_per_work_group = __work_group_size * __iters_per_work_item;
-        _Size __full_group_contrib = (__n / __items_per_work_group) * __work_group_size;
-        _Size __last_wg_remainder = __n % __items_per_work_group;
 
-        _Size __last_wg_contrib;
         if constexpr (_isComm)
         {
-            __last_wg_contrib = std::min(__last_wg_remainder, static_cast<_Size>(__work_group_size));
+            _Size __items_per_work_group = __work_group_size * __iters_per_work_item;
+            _Size __full_group_contrib = (__n / __items_per_work_group) * __work_group_size;
+            _Size __last_wg_remainder = __n % __items_per_work_group;
+
+            _Size __last_wg_contrib = std::min(__last_wg_remainder, static_cast<_Size>(__work_group_size));
+            return __full_group_contrib + __last_wg_contrib;
         }
         else
         {
-            _Size __last_stride_remainder = __n % __work_group_size;
-            bool __less_than_1_stride = (__last_wg_remainder / __work_group_size) == 0;
-            __last_wg_contrib =
+            _Size __sg_size = 32; //TODO: unhardcode
+            _Size __items_per_sub_group = __sg_size * __iters_per_work_item;
+            _Size __full_sub_group_contrib = (__n / __items_per_sub_group) * __sg_size;
+            _Size __last_sg_remainder = __n % __items_per_sub_group;
+
+            _Size __last_stride_remainder = __n % __sg_size;
+            bool __less_than_1_stride = (__last_sg_remainder / __sg_size) == 0;
+            _Size __last_sg_contrib =
                 __less_than_1_stride
                     ? __last_stride_remainder
-                    : oneapi::dpl::__internal::__dpl_ceiling_div(__work_group_size + __last_stride_remainder, 2);
+                    : oneapi::dpl::__internal::__dpl_ceiling_div(__sg_size + __last_stride_remainder, 2);
+            return __full_sub_group_contrib + __last_sg_contrib;
         }
-        return __full_group_contrib + __last_wg_contrib;
     }
 
     inline ::std::size_t
