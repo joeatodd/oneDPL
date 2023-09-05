@@ -183,6 +183,19 @@ struct __init_processing
 //------------------------------------------------------------------------
 // transform_reduce
 //------------------------------------------------------------------------
+template <typename... _Ts>
+std::tuple<_Ts...>
+select_tuple_from_group(sycl::sub_group G, std::tuple<_Ts...> value, unsigned int idx) {
+    return std::apply([G, idx](auto&&... elems){
+        return std::make_tuple(sycl::select_from_group(G, elems, idx)...);
+        }, value);
+}
+
+template <typename _T>
+_T
+select_tuple_from_group(sycl::sub_group G, _T value, unsigned int idx) {
+    return sycl::select_from_group(G, value, idx);
+}
 
 // Load elements consecutively from global memory, transform them, and apply a local reduction. Each local result is
 // stored in local memory.
@@ -237,6 +250,7 @@ struct transform_reduce
         const _Size __global_idx = __item_id.get_global_id(0);        const _Size __local_idx = __item_id.get_local_id(0);
         const _Size __stride = __item_id.get_local_range(0);
 
+        const sycl::sub_group __this_sg = __item_id.get_sub_group();
         const _Size __sg_idx = __item_id.get_sub_group().get_group_linear_id();
         const _Size __sg_stride = __item_id.get_sub_group().get_local_range()[0];
         const _Size __sg_local_idx = __item_id.get_sub_group().get_local_id()[0];
@@ -251,24 +265,29 @@ struct transform_reduce
 
         const _Size __sg_local_mem_offset = __sg_idx * __sg_stride * 2;
 
+        typename _AccLocal::value_type __res_0;
+        typename _AccLocal::value_type __res_1;
+
         // TODO: this check could be improved, since we have no sync
         bool __check_range = (__sg_start_idx + __sg_stride * __iters_per_work_item) > __adjusted_n;
 
         if (!__check_range)
         {
             // 1. load first __stride elements into 1st half of local mem
-            __local_mem[__sg_local_mem_offset + __sg_local_idx] = __unary_op(__adjusted_global_id, __acc...);
+            __res_0 = __unary_op(__adjusted_global_id, __acc...);
             _ONEDPL_PRAGMA_UNROLL
             for (_Size __i = 1; __i < __iters_per_work_item; ++__i)
             {
                 // 2. load next __stride elements into 2nd half of local mem
-                __local_mem[__sg_local_mem_offset + __sg_local_idx + __sg_stride] = __unary_op(__adjusted_global_id + __sg_stride * __i, __acc...);
+                __res_1 = __unary_op(__adjusted_global_id + __sg_stride * __i, __acc...);
 
                 // 3. reduce local_mem in order from 2*__stride elems to __stride elems
-                // TODO: deal with bank conflicts here
-                typename _AccLocal::value_type __res =
-                    __binary_op(__local_mem[__sg_local_mem_offset + 2 * __sg_local_idx], __local_mem[__sg_local_mem_offset + 2 * __sg_local_idx + 1]);
-                __local_mem[__sg_local_mem_offset + __sg_local_idx] = __res;
+                const bool __first_half = __sg_idx * 2 < __sg_stride;
+                const unsigned int __first_idx = __sg_idx * 2 % __sg_stride;
+                __res_0 = __binary_op(
+                        select_tuple_from_group(__this_sg, __first_half ? __res_0 : __res_1, __first_idx), 
+                        select_tuple_from_group(__this_sg, __first_half ? __res_0 : __res_1, __first_idx + 1)
+                        );
             }
         }
         else
@@ -279,14 +298,13 @@ struct transform_reduce
 
             // 1. load first __stride elements into 1st half of local mem
             if (__adjusted_global_id < __adjusted_n)
-                __local_mem[__sg_local_mem_offset + __sg_local_idx] = __unary_op(__adjusted_global_id, __acc...);
+                __res_0 = __unary_op(__adjusted_global_id, __acc...);
 
             for (_Size __i = 1; __i < __items_to_process; ++__i)
             {
                 // 2. load next __stride elements into 2nd half of local mem
                 if (__sg_start_idx + __sg_stride * __i + __sg_local_idx < __adjusted_n)
-                    __local_mem[__sg_local_mem_offset + __sg_local_idx + __sg_stride] = __unary_op(__adjusted_global_id + __sg_stride * __i, __acc...);
-                // __dpl_sycl::__group_barrier(__item_id);
+                    __res_1 = __unary_op(__adjusted_global_id + __sg_stride * __i, __acc...);
 
                 // 3. reduce local_mem in order from 2*__stride elems to __stride elems
                 // TODO: deal with bank conflicts here
@@ -298,19 +316,24 @@ struct transform_reduce
                 bool in_range = __last_idx < __adjusted_n;
                 bool half_in_range = __last_idx <= __adjusted_n;
                 typename _AccLocal::value_type __res;
+
+                const bool __first_half = __sg_idx * 2 < __sg_stride;
+                const unsigned int __first_idx = __sg_idx * 2 % __sg_stride;
+
                 if (half_in_range)
                 {
-                    __res = in_range ? __binary_op(__local_mem[__sg_local_mem_offset + 2 * __sg_local_idx], __local_mem[__sg_local_mem_offset + 2 * __sg_local_idx + 1])
-                                     : __local_mem[__sg_local_mem_offset + 2 * __sg_local_idx];
+                    __res_0 =
+                        in_range
+                            ? __binary_op(
+                                  select_tuple_from_group(__this_sg, __first_half ? __res_0 : __res_1, __first_idx),
+                                  select_tuple_from_group(__this_sg, __first_half ? __res_0 : __res_1, __first_idx + 1))
+                            : select_tuple_from_group(__this_sg, __first_half ? __res_0 : __res_1, __first_idx);
                 }
-                //  __dpl_sycl::__group_barrier(__item_id);
-                if (half_in_range)
-                    __local_mem[__sg_local_mem_offset + __sg_local_idx] = __res;
             }
         }
-        typename _AccLocal::value_type __final_res = __local_mem[__sg_local_mem_offset + __sg_local_idx];
-        sycl::group_barrier(__item_id.get_group());
-        __local_mem[__local_idx] = __final_res;
+        // typename _AccLocal::value_type __final_res = __local_mem[__sg_local_mem_offset + __sg_local_idx];
+        // sycl::group_barrier(__item_id.get_group());
+        __local_mem[__local_idx] = __res_0;
     }
 
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
