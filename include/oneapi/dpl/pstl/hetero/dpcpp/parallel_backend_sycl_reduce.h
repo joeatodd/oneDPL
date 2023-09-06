@@ -116,7 +116,7 @@ struct __parallel_transform_reduce_small_submitter<__work_group_size, __iters_pe
         auto __transform_pattern =
             unseq_backend::transform_reduce<_ExecutionPolicy, __iters_per_work_item, _ReduceOp, _TransformOp, _isComm>{
                 __reduce_op, __transform_op};
-        auto __reduce_pattern = unseq_backend::reduce_over_group<_ExecutionPolicy, _ReduceOp, _Tp>{__reduce_op};
+        auto __reduce_pattern = unseq_backend::reduce_over_group<_ExecutionPolicy, _ReduceOp, _Tp, __work_group_size>{__reduce_op};
 
         sycl::buffer<_Tp> __res(sycl::range<1>(1));
 
@@ -178,7 +178,7 @@ struct __parallel_transform_reduce_device_kernel_submitter<__work_group_size, __
         auto __transform_pattern =
             unseq_backend::transform_reduce<_ExecutionPolicy, __iters_per_work_item, _ReduceOp, _TransformOp, _isComm>{
                 __reduce_op, __transform_op};
-        auto __reduce_pattern = unseq_backend::reduce_over_group<_ExecutionPolicy, _ReduceOp, _Tp>{__reduce_op};
+        auto __reduce_pattern = unseq_backend::reduce_over_group<_ExecutionPolicy, _ReduceOp, _Tp, __work_group_size>{__reduce_op};
 
         // number of buffer elements processed within workgroup
         constexpr _Size __size_per_work_group = __iters_per_work_item * __work_group_size;
@@ -222,7 +222,7 @@ struct __parallel_transform_reduce_work_group_kernel_submitter<__work_group_size
         auto __transform_pattern =
             unseq_backend::transform_reduce<_ExecutionPolicy, __iters_per_work_item, _ReduceOp, _NoOpFunctor, _isComm>{
                 __reduce_op, _NoOpFunctor{}};
-        auto __reduce_pattern = unseq_backend::reduce_over_group<_ExecutionPolicy, _ReduceOp, _Tp>{__reduce_op};
+        auto __reduce_pattern = unseq_backend::reduce_over_group<_ExecutionPolicy, _ReduceOp, _Tp, __work_group_size>{__reduce_op};
 
         // Lower the work group size of the second kernel to the next power of 2 if __n < __work_group_size.
         auto __work_group_size2 = __work_group_size;
@@ -295,14 +295,14 @@ __parallel_transform_reduce_mid_impl(_ExecutionPolicy&& __exec, _Size __n, _Redu
 }
 
 // General implementation using a tree reduction
-template <typename _Tp, ::std::uint8_t __iters_per_work_item, bool _isComm>
+template <typename _Tp, ::std::uint8_t __iters_per_work_item, ::std::uint16_t __work_group_size, bool _isComm>
 struct __parallel_transform_reduce_impl
 {
     template <typename _ExecutionPolicy, typename _Size, typename _ReduceOp, typename _TransformOp, typename _InitType,
               oneapi::dpl::__internal::__enable_if_device_execution_policy<_ExecutionPolicy, int> = 0,
               typename... _Ranges>
     static auto
-    submit(_ExecutionPolicy&& __exec, _Size __n, ::std::uint16_t __work_group_size, _ReduceOp __reduce_op,
+    submit(_ExecutionPolicy&& __exec, _Size __n, /* ::std::uint16_t __work_group_size,  */_ReduceOp __reduce_op,
            _TransformOp __transform_op, _InitType __init, _Ranges&&... __rngs)
     {
         using _Policy = typename ::std::decay<_ExecutionPolicy>::type;
@@ -317,11 +317,11 @@ struct __parallel_transform_reduce_impl
         auto __transform_pattern2 =
             unseq_backend::transform_reduce<_ExecutionPolicy, __iters_per_work_item, _ReduceOp, _NoOpFunctor, _isComm>{
                 __reduce_op, _NoOpFunctor{}};
-        auto __reduce_pattern = unseq_backend::reduce_over_group<_ExecutionPolicy, _ReduceOp, _Tp>{__reduce_op};
+        auto __reduce_pattern = unseq_backend::reduce_over_group<_ExecutionPolicy, _ReduceOp, _Tp, __work_group_size>{__reduce_op};
 
 #if _ONEDPL_COMPILE_KERNEL
         auto __kernel = __internal::__kernel_compiler<_ReduceKernel>::__compile(__exec);
-        __work_group_size = ::std::min(
+        /* __work_group_size =  */::std::min(
             __work_group_size, (::std::uint16_t)oneapi::dpl::__internal::__kernel_work_group_size(__exec, __kernel));
 #endif
 
@@ -429,8 +429,8 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _ReduceOp __reduce_op, _T
     // Get the work group size adjusted to the local memory limit.
     // Pessimistically double the memory requirement to take into account memory used by compiled kernel.
     // TODO: find a way to generalize getting of reliable work-group size.
-    ::std::uint16_t __work_group_size =
-        oneapi::dpl::__internal::__slm_adjusted_work_group_size(__exec, sizeof(_Tp) * 2);
+    constexpr ::std::uint16_t __work_group_size = 256;
+    // oneapi::dpl::__internal::__slm_adjusted_work_group_size(__exec, sizeof(_Tp) * 2);
 
     // Use single work group implementation if array < __work_group_size * __iters_per_work_item.
     if (__work_group_size >= 256)
@@ -513,8 +513,8 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _ReduceOp __reduce_op, _T
         }
     }
     // Otherwise use a recursive tree reduction.
-    return __parallel_transform_reduce_impl<_Tp, 32, _isComm>::submit(::std::forward<_ExecutionPolicy>(__exec), __n,
-                                                                      __work_group_size, __reduce_op, __transform_op,
+    return __parallel_transform_reduce_impl<_Tp, 32, 256, _isComm>::submit(::std::forward<_ExecutionPolicy>(__exec), __n,
+                                                                      /* __work_group_size, */ __reduce_op, __transform_op,
                                                                       __init, ::std::forward<_Ranges>(__rngs)...);
 }
 

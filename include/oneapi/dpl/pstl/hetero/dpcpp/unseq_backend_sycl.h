@@ -300,14 +300,16 @@ struct transform_reduce
 // Reduce local reductions of each work item to a single reduced element per work group. The local reductions are held
 // in local memory. sycl::reduce_over_group is used for supported data types and operations. All other operations are
 // processed in order and without a known identity.
-template <typename _ExecutionPolicy, typename _BinaryOperation1, typename _Tp>
+template <typename _ExecutionPolicy, typename _BinaryOperation1, typename _Tp, ::std::uint16_t __work_group_size>
 struct reduce_over_group
 {
     _BinaryOperation1 __bin_op1;
 
 #ifdef ONEDPL_USE_SHUFFLE_ROG
     inline _Tp shuffle_sub_group_reduce(_Tp __val, sycl::sub_group __sg) const {
-        for (int __offset = __sg.get_local_linear_range() / 2; __offset > 0; __offset /= 2)
+        //TODO: unhardcode here
+        _ONEDPL_PRAGMA_UNROLL
+        for (int __offset = 32 / 2; __offset > 0; __offset /= 2)
          __val = __bin_op1(__val, __sg.shuffle_down(__val, __offset));
        return __val;
     }
@@ -369,14 +371,17 @@ struct reduce_over_group
     {
         auto __local_idx = __item_id.get_local_id(0);
         auto __global_idx = __item_id.get_global_id(0);
-        auto __group_size = __item_id.get_local_range().size();
+        // auto __group_size = __item_id.get_local_range().size();
 
-        for (::std::uint32_t __power_2 = 1; __power_2 < __group_size; __power_2 *= 2)
+        // TODO: unroll here! Need a group_size template parameter
+        _ONEDPL_PRAGMA_UNROLL
+        for (::std::uint32_t __power_2 = 1; __power_2 < __work_group_size; __power_2 *= 2)
         {
             __dpl_sycl::__group_barrier(__item_id);
-            if ((__local_idx & (2 * __power_2 - 1)) == 0 && __local_idx + __power_2 < __group_size &&
+            if ((__local_idx & (2 * __power_2 - 1)) == 0 && __local_idx + __power_2 < __work_group_size &&
                 __global_idx + __power_2 < __n)
             {
+                //Is this one of the patterns from the paper/slides?
                 __local_mem[__local_idx] = __bin_op1(__local_mem[__local_idx], __local_mem[__local_idx + __power_2]);
             }
         }
@@ -398,7 +403,7 @@ struct reduce_over_group
     }
 
     inline ::std::size_t
-    local_mem_req(const ::std::uint16_t& __work_group_size) const
+    local_mem_req(const ::std::uint16_t& dummy) const
     {
         return __work_group_size;
     }
