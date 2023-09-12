@@ -285,7 +285,7 @@ struct transform_reduce
             _Size __last_wg_contrib = std::min(__last_wg_remainder, static_cast<_Size>(__work_group_size));
             return __full_group_contrib + __last_wg_contrib;
         }
-#endif // __SPRIV__
+#endif // __SPIRV__
 
         return oneapi::dpl::__internal::__dpl_ceiling_div(__n, __iters_per_work_item);
     }
