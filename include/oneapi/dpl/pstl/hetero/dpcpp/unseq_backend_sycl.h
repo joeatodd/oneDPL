@@ -247,7 +247,8 @@ struct transform_reduce
     seq_impl(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset, const _AccLocal& __local_mem,
              const _Acc&... __acc) const
     {
-        const _Size __global_idx = __item_id.get_global_id(0);        const _Size __local_idx = __item_id.get_local_id(0);
+        const _Size __global_idx = __item_id.get_global_id(0);
+        const _Size __local_idx = __item_id.get_local_id(0);
         const _Size __stride = __item_id.get_local_range(0);
 
         const sycl::sub_group __this_sg = __item_id.get_sub_group();
@@ -268,6 +269,12 @@ struct transform_reduce
         typename _AccLocal::value_type __res_0;
         typename _AccLocal::value_type __res_1;
 
+        const bool __first_half = __sg_local_idx * 2 < __sg_stride;
+        const bool __even_idx = __sg_local_idx % 2 == 0;
+        const unsigned int __my_half_idx = __sg_local_idx % (__sg_stride / 2);
+        const unsigned int __first_idx  = __my_half_idx * 2 + !__first_half;
+        const unsigned int __second_idx = __my_half_idx * 2 + __first_half;
+
         // TODO: this check could be improved, since we have no sync
         bool __check_range = (__sg_start_idx + __sg_stride * __iters_per_work_item) > __adjusted_n;
 
@@ -282,12 +289,13 @@ struct transform_reduce
                 __res_1 = __unary_op(__adjusted_global_id + __sg_stride * __i, __acc...);
 
                 // 3. reduce local_mem in order from 2*__stride elems to __stride elems
-                const bool __first_half = __sg_idx * 2 < __sg_stride;
-                const unsigned int __first_idx = __sg_idx * 2 % __sg_stride;
-                __res_0 = __binary_op(
-                        select_tuple_from_group(__this_sg, __first_half ? __res_0 : __res_1, __first_idx), 
-                        select_tuple_from_group(__this_sg, __first_half ? __res_0 : __res_1, __first_idx + 1)
-                        );
+
+                typename _AccLocal::value_type __recv_0 = select_tuple_from_group(__this_sg, __even_idx ? __res_0 : __res_1, __first_idx);
+                typename _AccLocal::value_type __recv_1 = select_tuple_from_group(__this_sg, __even_idx ? __res_1 : __res_0, __second_idx);
+
+                __res_0 =
+                    __binary_op(__first_half ? __recv_0 : __recv_1, 
+                                __first_half ? __recv_1 : __recv_0);
             }
         }
         else
@@ -296,39 +304,39 @@ struct transform_reduce
                 std::min(oneapi::dpl::__internal::__dpl_ceiling_div(__adjusted_n - __sg_start_idx, __sg_stride),
                          static_cast<_Size>(__iters_per_work_item));
 
-            // 1. load first __stride elements into 1st half of local mem
+            // 1. load first __stride elements into 1st register
             if (__adjusted_global_id < __adjusted_n)
                 __res_0 = __unary_op(__adjusted_global_id, __acc...);
 
             for (_Size __i = 1; __i < __items_to_process; ++__i)
             {
-                // 2. load next __stride elements into 2nd half of local mem
+                // 2. load next __stride elements into 2nd register
                 if (__sg_start_idx + __sg_stride * __i + __sg_local_idx < __adjusted_n)
                     __res_1 = __unary_op(__adjusted_global_id + __sg_stride * __i, __acc...);
 
-                // 3. reduce local_mem in order from 2*__stride elems to __stride elems
-                // TODO: deal with bank conflicts here
+                // 3. reduce local_mem in order from 2*__sg_stride elems to __sg_stride elems
                 // 3 cases:
                 // 1. totally in range, do a binary reduction into __res, then write to local mem
                 // 2. totally out of range, do nothing
                 // 3. 1st value in range, load it to __res, write to local mem
                 const _Size __last_idx = __sg_start_idx + (__i - 1) * __sg_stride + __sg_local_idx * 2 + 1;
-                bool in_range = __last_idx < __adjusted_n;
-                bool half_in_range = __last_idx <= __adjusted_n;
-                typename _AccLocal::value_type __res;
+                bool __in_range = __last_idx < __adjusted_n;
+                bool __half_in_range = __last_idx <= __adjusted_n;
 
-                const bool __first_half = __sg_idx * 2 < __sg_stride;
-                const unsigned int __first_idx = __sg_idx * 2 % __sg_stride;
+//TODO: rename select_tuple_from_group
+//TODO: avoid use of _AccLocal::value_type for clarity
 
-                if (half_in_range)
-                {
-                    __res_0 =
-                        in_range
-                            ? __binary_op(
-                                  select_tuple_from_group(__this_sg, __first_half ? __res_0 : __res_1, __first_idx),
-                                  select_tuple_from_group(__this_sg, __first_half ? __res_0 : __res_1, __first_idx + 1))
-                            : select_tuple_from_group(__this_sg, __first_half ? __res_0 : __res_1, __first_idx);
+                typename _AccLocal::value_type __recv_0 = select_tuple_from_group(__this_sg, __even_idx ? __res_0 : __res_1, __first_idx);
+                typename _AccLocal::value_type __recv_1 = select_tuple_from_group(__this_sg, __even_idx ? __res_1 : __res_0, __second_idx);
+
+                if(__in_range){
+                    __res_0 = __binary_op(__first_half ? __recv_0 : __recv_1, 
+                                          __first_half ? __recv_1 : __recv_0);
                 }
+                else if(__half_in_range){
+                    __res_0 = __first_half ? __recv_0 : __recv_1;
+                }
+
             }
         }
         // typename _AccLocal::value_type __final_res = __local_mem[__sg_local_mem_offset + __sg_local_idx];
