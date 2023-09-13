@@ -21,6 +21,7 @@
 
 #include "../../onedpl_config.h"
 #include "../../utils.h"
+#include "../../iterator_impl.h"
 #include "sycl_defs.h"
 
 namespace oneapi
@@ -308,31 +309,31 @@ struct reduce_over_sub_group
     template <typename _Size>
     inline _Tp shuffle_sub_group_reduce(_Tp __val, sycl::sub_group __sg, const _Size& /*__n*/, std::true_type /*has_known_identity*/) const {
         if constexpr (_isComm) {
-            for (int __offset = 1; __offset <= __sg.get_local_linear_range() / 2; __offset *=  2)
-              __val = __bin_op1(__val, __sg.shuffle_down(__val, __offset));
-        } else {
             for (int __offset = __sg.get_local_linear_range() / 2; __offset > 0; __offset /= 2)
                __val = __bin_op1(__val, __sg.shuffle_down(__val, __offset));
+        } else {
+            for (int __offset = 1; __offset <= __sg.get_local_linear_range() / 2; __offset *=  2)
+              __val = __bin_op1(__val, __sg.shuffle_down(__val, __offset));
         }
        return __val;
     }
 
     template <typename _Size>
     inline _Tp shuffle_sub_group_reduce(_Tp __val, sycl::sub_group __sg, const _Size& __n, std::false_type /*has_known_identity*/) const {
-        auto __local_idx = __sg.get_local_linear_range();
+        auto __local_idx = __sg.get_local_id();
         _Tp __temp_val;
 
         if constexpr (_isComm) {
-            for (int __offset = 1; __offset <= __local_idx / 2; __offset *=  2) {
-              __temp_val = __sg.shuffle_down(__val, __offset);
-              if (__local_idx + __offset < __n)
-                __val = __bin_op1(__val, __temp_val);
-            }
-        } else {
-            for (int __offset = __local_idx / 2; __offset > 0; __offset /= 2) {
+            for (int __offset = __sg.get_local_linear_range() / 2; __offset > 0; __offset /= 2) {
                __temp_val = __sg.shuffle_down(__val, __offset);
                if (__local_idx + __offset < __n)
                  __val = __bin_op1(__val, __sg.shuffle_down(__val, __offset));
+            }
+        } else {
+            for (int __offset = 1; __offset <= __sg.get_local_linear_range() / 2; __offset *=  2) {
+              __temp_val = __sg.shuffle_down(__val, __offset);
+              if (__local_idx + __offset < __n)
+                __val = __bin_op1(__val, __temp_val);
             }
         }
        return __val;
@@ -388,8 +389,8 @@ struct reduce_over_sub_group
     {
         return __work_group_size;
     }
-}
-;
+};
+
 // Reduce local reductions of each work item to a single reduced element per work group. The local reductions are held
 // in local memory. sycl::reduce_over_group is used for supported data types and operations. All other operations are
 // processed in order and without a known identity.

@@ -119,7 +119,7 @@ __device_reduce_kernel(const _NDItemId& __item_id, const _Size& __n, _TransformP
 //------------------------------------------------------------------------
 
 // Parallel_transform_reduce for a small arrays using a single work group.
-// Transforms and reduces __work_group_size * __iters_per_work_item elements.
+// Transforms and reduces __sub_group_size * __iters_per_work_item elements.
 template <::std::uint16_t __sub_group_size, ::std::uint8_t __iters_per_work_item, typename _Tp, bool _isComm,
           typename _KernelName>
 struct __parallel_transform_reduce_sub_group_submitter;
@@ -151,8 +151,8 @@ struct __parallel_transform_reduce_sub_group_submitter<__sub_group_size, __iters
             __dpl_sycl::__local_accessor<_Tp> __temp_local(sycl::range<1>(__local_mem_size), __cgh);
             __cgh.parallel_for<_Name...>(
                 sycl::nd_range<1>(sycl::range<1>(__sub_group_size), sycl::range<1>(__sub_group_size)),
-                [=](sycl::nd_item<1> __item_id) {
-                    __work_group_reduce_kernel<_Tp>(__item_id, __n, __transform_pattern, __reduce_pattern, __init,
+                [=](sycl::nd_item<1> __item_id) [[sycl::reqd_sub_group_size(__sub_group_size)]] {
+                    __sub_group_reduce_kernel<_Tp>(__item_id, __n, __transform_pattern, __reduce_pattern, __init,
                                                     __temp_local, __res_acc, __rngs...);
                 });
         });
@@ -520,45 +520,46 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _ReduceOp __reduce_op, _T
     if (__work_group_size >= 256)
     {
 #ifdef USE_SUB_GROUP_REDUCE
+        constexpr int sg_size = 16;
         if (__n <= 32)
         {
-            return __parallel_transform_reduce_sub_group_impl<32, 1, _Tp, _isComm>(
+            return __parallel_transform_reduce_sub_group_impl<sg_size, 32/sg_size, _Tp, _isComm>(
                 ::std::forward<_ExecutionPolicy>(__exec), __n, __reduce_op, __transform_op, __init,
                 ::std::forward<_Ranges>(__rngs)...);
         }
         else if (__n <= 64)
         {
-            return __parallel_transform_reduce_sub_group_impl<32, 2, _Tp, _isComm>(
+            return __parallel_transform_reduce_sub_group_impl<sg_size, 64/sg_size, _Tp, _isComm>(
                 ::std::forward<_ExecutionPolicy>(__exec), __n, __reduce_op, __transform_op, __init,
                 ::std::forward<_Ranges>(__rngs)...);
         }
         else if (__n <= 128)
         {
-            return __parallel_transform_reduce_sub_group_impl<32, 4, _Tp, _isComm>(
+            return __parallel_transform_reduce_sub_group_impl<sg_size, 128/sg_size, _Tp, _isComm>(
                 ::std::forward<_ExecutionPolicy>(__exec), __n, __reduce_op, __transform_op, __init,
                 ::std::forward<_Ranges>(__rngs)...);
         }
         else if (__n <= 256)
         {
-            return __parallel_transform_reduce_sub_group_impl<32, 8, _Tp, _isComm>(
+            return __parallel_transform_reduce_sub_group_impl<sg_size, 256/sg_size, _Tp, _isComm>(
                 ::std::forward<_ExecutionPolicy>(__exec), __n, __reduce_op, __transform_op, __init,
                 ::std::forward<_Ranges>(__rngs)...);
         }
         else if (__n <= 512)
         {
-            return __parallel_transform_reduce_sub_group_impl<32, 16, _Tp, _isComm>(
+            return __parallel_transform_reduce_sub_group_impl<sg_size, 512/sg_size, _Tp, _isComm>(
                 ::std::forward<_ExecutionPolicy>(__exec), __n, __reduce_op, __transform_op, __init,
                 ::std::forward<_Ranges>(__rngs)...);
         }
         else if (__n <= 1024)
         {
-            return __parallel_transform_reduce_sub_group_impl<32, 32, _Tp, _isComm>(
+            return __parallel_transform_reduce_sub_group_impl<sg_size, 1024/sg_size, _Tp, _isComm>(
                 ::std::forward<_ExecutionPolicy>(__exec), __n, __reduce_op, __transform_op, __init,
                 ::std::forward<_Ranges>(__rngs)...);
         }
         else if (__n <= 2048)
         {
-            return __parallel_transform_reduce_sub_group_impl<32, 64, _Tp, _isComm>(
+            return __parallel_transform_reduce_sub_group_impl<sg_size, 2048/sg_size, _Tp, _isComm>(
                 ::std::forward<_ExecutionPolicy>(__exec), __n, __reduce_op, __transform_op, __init,
                 ::std::forward<_Ranges>(__rngs)...);
         }
