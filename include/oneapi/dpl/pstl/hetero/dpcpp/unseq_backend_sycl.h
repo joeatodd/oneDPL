@@ -185,15 +185,16 @@ struct __init_processing
 //------------------------------------------------------------------------
 template <typename... _Ts>
 std::tuple<_Ts...>
-select_from_group(sycl::sub_group G, std::tuple<_Ts...> value, unsigned int idx) {
-    return std::apply([G, idx](auto&&... elems){
-        return std::make_tuple(sycl::select_from_group(G, elems, idx)...);
-        }, value);
+select_from_group(sycl::sub_group G, std::tuple<_Ts...> value, unsigned int idx)
+{
+    return std::apply([G, idx](auto&&... elems) { return std::make_tuple(sycl::select_from_group(G, elems, idx)...); },
+                      value);
 }
 
 template <typename _T>
 _T
-select_from_group(sycl::sub_group G, _T value, unsigned int idx) {
+select_from_group(sycl::sub_group G, _T value, unsigned int idx)
+{
     return sycl::select_from_group(G, value, idx);
 }
 
@@ -208,8 +209,8 @@ struct transform_reduce
 
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
     inline void
-    nonseq_impl(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset, const _AccLocal& __local_mem,
-                const _Acc&... __acc) const
+    nonseq_impl(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset,
+                const _AccLocal& __local_mem, const _Acc&... __acc) const
     {
 
         auto __global_idx = __item_id.get_global_id(0);
@@ -255,10 +256,8 @@ struct transform_reduce
         const _Size __sg_local_idx = __item_id.get_sub_group().get_local_id()[0];
 
         const _Size __group_start_idx =
-            __global_offset + __item_id.get_group_linear_id() * 
-            __item_id.get_local_range(0) * __iters_per_work_item;
-        const _Size __sg_start_idx = 
-            __group_start_idx + __sg_idx * __sg_size * __iters_per_work_item;
+            __global_offset + __item_id.get_group_linear_id() * __item_id.get_local_range(0) * __iters_per_work_item;
+        const _Size __sg_start_idx = __group_start_idx + __sg_idx * __sg_size * __iters_per_work_item;
 
         const _Size __adjusted_global_id = __sg_start_idx + __sg_local_idx;
         const _Size __adjusted_n = __global_offset + __n;
@@ -269,7 +268,7 @@ struct transform_reduce
         const bool __first_half = __sg_local_idx * 2 < __sg_size;
         const bool __even_idx = __sg_local_idx % 2 == 0;
         const unsigned int __my_half_idx = __sg_local_idx % (__sg_size / 2);
-        const unsigned int __first_idx  = __my_half_idx * 2 + !__first_half;
+        const unsigned int __first_idx = __my_half_idx * 2 + !__first_half;
         const unsigned int __second_idx = __my_half_idx * 2 + __first_half;
 
         bool __check_range = (__sg_start_idx + __sg_size * __iters_per_work_item) > __adjusted_n;
@@ -286,12 +285,12 @@ struct transform_reduce
 
                 // 3. reduce local_mem in order from 2*__stride elems to __stride elems
 
-                typename _AccLocal::value_type __recv_0 = select_from_group(__this_sg, __even_idx ? __res_0 : __res_1, __first_idx);
-                typename _AccLocal::value_type __recv_1 = select_from_group(__this_sg, __even_idx ? __res_1 : __res_0, __second_idx);
+                typename _AccLocal::value_type __recv_0 =
+                    select_from_group(__this_sg, __even_idx ? __res_0 : __res_1, __first_idx);
+                typename _AccLocal::value_type __recv_1 =
+                    select_from_group(__this_sg, __even_idx ? __res_1 : __res_0, __second_idx);
 
-                __res_0 =
-                    __binary_op(__first_half ? __recv_0 : __recv_1, 
-                                __first_half ? __recv_1 : __recv_0);
+                __res_0 = __binary_op(__first_half ? __recv_0 : __recv_1, __first_half ? __recv_1 : __recv_0);
             }
         }
         else
@@ -319,17 +318,19 @@ struct transform_reduce
                 bool __in_range = __last_idx < __adjusted_n;
                 bool __half_in_range = __last_idx <= __adjusted_n;
 
-                typename _AccLocal::value_type __recv_0 = select_from_group(__this_sg, __even_idx ? __res_0 : __res_1, __first_idx);
-                typename _AccLocal::value_type __recv_1 = select_from_group(__this_sg, __even_idx ? __res_1 : __res_0, __second_idx);
+                typename _AccLocal::value_type __recv_0 =
+                    select_from_group(__this_sg, __even_idx ? __res_0 : __res_1, __first_idx);
+                typename _AccLocal::value_type __recv_1 =
+                    select_from_group(__this_sg, __even_idx ? __res_1 : __res_0, __second_idx);
 
-                if(__in_range){
-                    __res_0 = __binary_op(__first_half ? __recv_0 : __recv_1, 
-                                          __first_half ? __recv_1 : __recv_0);
+                if (__in_range)
+                {
+                    __res_0 = __binary_op(__first_half ? __recv_0 : __recv_1, __first_half ? __recv_1 : __recv_0);
                 }
-                else if(__half_in_range){
+                else if (__half_in_range)
+                {
                     __res_0 = __first_half ? __recv_0 : __recv_1;
                 }
-
             }
         }
         __local_mem[__item_id.get_local_id(0)] = __res_0;
@@ -339,7 +340,7 @@ struct transform_reduce
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
     void
     seq_impl(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
-               const _Acc&... __acc) const
+             const _Acc&... __acc) const
     {
         auto __global_idx = __item_id.get_global_id(0);
         auto __local_idx = __item_id.get_local_id(0);
