@@ -50,30 +50,7 @@ class __reduce_kernel;
 template <typename _Tp, typename _NDItemId, typename _Size, typename _TransformPattern, typename _ReducePattern,
           typename _InitType, typename _AccLocal, typename _Res, typename... _Acc>
 inline void
-__sub_group_reduce_kernel(const _NDItemId& __item_id, const _Size& __n, _TransformPattern __transform_pattern,
-                           _ReducePattern __reduce_pattern, _InitType __init, const _AccLocal& __local_mem,
-                           const _Res& __res_acc, const _Acc&... __acc)
-{
-    auto __local_idx = __item_id.get_local_id(0);
-    auto __group_size = __item_id.get_local_range().size();
-    // 1. Initialization (transform part). Fill local memory
-    __transform_pattern(__item_id, __n, /*global_offset*/ (_Size)0, __local_mem, __acc...);
-    __dpl_sycl::__group_barrier(__item_id);
-    const _Size __n_items = __transform_pattern.output_size(__n, __group_size);
-    // 2. Reduce within sub group using local memory
-    _Tp __result = __reduce_pattern(__item_id, __n_items, __local_mem);
-    if (__local_idx == 0)
-    {
-        __reduce_pattern.apply_init(__init, __result);
-        __res_acc[0] = __result;
-    }
-}
-
-// Single work group kernel that transforms and reduces __n elements to the single result.
-template <typename _Tp, typename _NDItemId, typename _Size, typename _TransformPattern, typename _ReducePattern,
-          typename _InitType, typename _AccLocal, typename _Res, typename... _Acc>
-inline void
-__work_group_reduce_kernel(const _NDItemId& __item_id, const _Size& __n, _TransformPattern __transform_pattern,
+__group_reduce_kernel(const _NDItemId& __item_id, const _Size& __n, _TransformPattern __transform_pattern,
                            _ReducePattern __reduce_pattern, _InitType __init, const _AccLocal& __local_mem,
                            const _Res& __res_acc, const _Acc&... __acc)
 {
@@ -152,7 +129,7 @@ struct __parallel_transform_reduce_sub_group_submitter<__sub_group_size, __iters
             __cgh.parallel_for<_Name...>(
                 sycl::nd_range<1>(sycl::range<1>(__sub_group_size), sycl::range<1>(__sub_group_size)),
                 [=](sycl::nd_item<1> __item_id) [[sycl::reqd_sub_group_size(__sub_group_size)]] {
-                    __sub_group_reduce_kernel<_Tp>(__item_id, __n, __transform_pattern, __reduce_pattern, __init,
+                    __group_reduce_kernel<_Tp>(__item_id, __n, __transform_pattern, __reduce_pattern, __init,
                                                     __temp_local, __res_acc, __rngs...);
                 });
         });
@@ -213,7 +190,7 @@ struct __parallel_transform_reduce_small_submitter<__work_group_size, __iters_pe
             __cgh.parallel_for<_Name...>(
                 sycl::nd_range<1>(sycl::range<1>(__work_group_size), sycl::range<1>(__work_group_size)),
                 [=](sycl::nd_item<1> __item_id) {
-                    __work_group_reduce_kernel<_Tp>(__item_id, __n, __transform_pattern, __reduce_pattern, __init,
+                    __group_reduce_kernel<_Tp>(__item_id, __n, __transform_pattern, __reduce_pattern, __init,
                                                     __temp_local, __res_acc, __rngs...);
                 });
         });
@@ -334,7 +311,7 @@ struct __parallel_transform_reduce_work_group_kernel_submitter<__work_group_size
             __cgh.parallel_for<_KernelName...>(
                 sycl::nd_range<1>(sycl::range<1>(__work_group_size2), sycl::range<1>(__work_group_size2)),
                 [=](sycl::nd_item<1> __item_id) {
-                    __work_group_reduce_kernel<_Tp>(__item_id, __n, __transform_pattern, __reduce_pattern, __init,
+                    __group_reduce_kernel<_Tp>(__item_id, __n, __transform_pattern, __reduce_pattern, __init,
                                                     __temp_local, __res_acc, __temp_acc);
                 });
         });
