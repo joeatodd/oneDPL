@@ -294,7 +294,7 @@ struct transform_reduce
                 __res_0 = __binary_op(__first_half ? __recv_0 : __recv_1, __first_half ? __recv_1 : __recv_0);
             }
         }
-        else
+        else if (__adjusted_global_id < __adjusted_n)
         {
             const _Size __items_to_process =
                 std::min(oneapi::dpl::__internal::__dpl_ceiling_div(__adjusted_n - __sg_start_idx, __sg_size),
@@ -373,8 +373,10 @@ struct transform_reduce
     operator()(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset, const _AccLocal& __local_mem,
                const _Acc&... __acc) const
     {
+#ifndef __SPIRV__
         if constexpr (_isComm)
             return nonseq_impl(__item_id, __n, __global_offset, __local_mem, __acc...);
+#endif // __SPIRV__
         return seq_impl(__item_id, __n, __global_offset, __local_mem, __acc...);
     }
 
@@ -382,7 +384,7 @@ struct transform_reduce
     _Size
     output_size(const _Size& __n, const ::std::uint16_t& __work_group_size) const
     {
-
+#ifndef __SPIRV__
         if constexpr (_isComm)
         {
             _Size __items_per_work_group = __work_group_size * __iters_per_work_item;
@@ -409,17 +411,110 @@ struct transform_reduce
             return __full_sub_group_contrib + __last_sg_contrib;
 #else
             return oneapi::dpl::__internal::__dpl_ceiling_div(__n, __iters_per_work_item);
-#endif
+#endif // ONEDPL_USE_SHUFFLE_TRANSFORM_REDUCE
         }
+#endif // __SPIRV__
+
+        return oneapi::dpl::__internal::__dpl_ceiling_div(__n, __iters_per_work_item);
     }
 
     inline ::std::size_t
     local_mem_req(const ::std::uint16_t& __work_group_size) const
     {
-        if constexpr (_isComm)
-            return __work_group_size;
-        else
-            return 2 * __work_group_size;
+        return __work_group_size;
+    }
+};
+
+// Reduce local reductions of each work item to a single reduced element per work group. The local reductions are held
+// in local memory. sycl::reduce_over_group is used for supported data types and operations. All other operations are
+// processed in order and without a known identity.
+template <typename _ExecutionPolicy, typename _BinaryOperation1, typename _Tp, bool _isComm>
+struct reduce_over_sub_group
+{
+    _BinaryOperation1 __bin_op1;
+
+    template <typename _Size>
+    inline _Tp shuffle_sub_group_reduce(_Tp __val, sycl::sub_group __sg, const _Size& /*__n*/, std::true_type /*has_known_identity*/) const {
+        if constexpr (_isComm) {
+            for (int __offset = __sg.get_local_linear_range() / 2; __offset > 0; __offset /= 2)
+               __val = __bin_op1(__val, __sg.shuffle_down(__val, __offset));
+        } else {
+            for (int __offset = 1; __offset <= __sg.get_local_linear_range() / 2; __offset *=  2)
+              __val = __bin_op1(__val, __sg.shuffle_down(__val, __offset));
+        }
+       return __val;
+    }
+
+    template <typename _Size>
+    inline _Tp shuffle_sub_group_reduce(_Tp __val, sycl::sub_group __sg, const _Size& __n, std::false_type /*has_known_identity*/) const {
+        auto __local_idx = __sg.get_local_id();
+        _Tp __temp_val;
+
+        if constexpr (_isComm) {
+            for (int __offset = __sg.get_local_linear_range() / 2; __offset > 0; __offset /= 2) {
+               __temp_val = __sg.shuffle_down(__val, __offset);
+               if (__local_idx + __offset < __n)
+                 __val = __bin_op1(__val, __sg.shuffle_down(__val, __offset));
+            }
+        } else {
+            for (int __offset = 1; __offset <= __sg.get_local_linear_range() / 2; __offset *=  2) {
+              __temp_val = __sg.shuffle_down(__val, __offset);
+              if (__local_idx + __offset < __n)
+                __val = __bin_op1(__val, __temp_val);
+            }
+        }
+       return __val;
+    }
+
+    template <typename _NDItemId, typename _Size, typename _AccLocal>
+    inline _Tp
+    reduce_impl(const _NDItemId& __item_id, const _Size& __n, const _AccLocal& __local_mem,
+                std::true_type /*has_known_identity*/) const
+    {
+      auto __sg = __item_id.get_sub_group();
+
+      auto __local_idx = __item_id.get_local_id(0);
+      auto __global_idx = __item_id.get_global_id(0);
+
+      _Tp __val = __local_mem[__local_idx];
+      if (__global_idx >= __n)
+          __val = __known_identity<_BinaryOperation1, _Tp>;
+
+      return shuffle_sub_group_reduce(__val, __sg, __n, std::true_type());
+    }
+ 
+    template <typename _NDItemId, typename _Size, typename _AccLocal>
+    inline _Tp
+    reduce_impl(const _NDItemId& __item_id, const _Size& __n, const _AccLocal& __local_mem,
+                std::false_type /*has_known_identity*/) const
+    {
+      auto __sg = __item_id.get_sub_group();
+
+      auto __local_idx = __item_id.get_local_id(0);
+
+      _Tp __val = __local_mem[__local_idx];
+
+      return shuffle_sub_group_reduce(__val, __sg, __n, std::false_type());
+    }
+
+    template <typename _NDItemId, typename _Size, typename _AccLocal>
+    inline _Tp
+    operator()(const _NDItemId& __item_id, const _Size& __n, const _AccLocal& __local_mem) const
+    {
+        return reduce_impl(__item_id, __n, __local_mem, __has_known_identity<_BinaryOperation1, _Tp>{});
+    }
+
+    template <typename _InitType, typename _Result>
+    inline void
+    apply_init(const _InitType& __init, _Result&& __result) const
+    {
+        __init_processing<_Tp>{}(__init, __result, __bin_op1);
+    }
+
+    inline ::std::size_t
+    local_mem_req(const ::std::uint16_t& __work_group_size) const
+    {
+        return __work_group_size;
     }
 };
 
