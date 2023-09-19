@@ -185,17 +185,18 @@ struct __init_processing
 //------------------------------------------------------------------------
 template <typename... _Ts>
 std::tuple<_Ts...>
-select_from_group(sycl::sub_group G, std::tuple<_Ts...> value, unsigned int idx)
+select_from_group(sycl::sub_group __sg, std::tuple<_Ts...> __value, unsigned int __idx)
 {
-    return std::apply([G, idx](auto&&... elems) { return std::make_tuple(sycl::select_from_group(G, elems, idx)...); },
-                      value);
+    return std::apply(
+        [__sg, __idx](auto&&... elems) { return std::make_tuple(sycl::select_from_group(__sg, elems, __idx)...); },
+        __value);
 }
 
 template <typename _T>
 _T
-select_from_group(sycl::sub_group G, _T value, unsigned int idx)
+select_from_group(sycl::sub_group __sg, _T __value, unsigned int __idx)
 {
-    return sycl::select_from_group(G, value, idx);
+    return sycl::select_from_group(__sg, __value, __idx);
 }
 
 // Load elements consecutively from global memory, transform them, and apply a local reduction. Each local result is
