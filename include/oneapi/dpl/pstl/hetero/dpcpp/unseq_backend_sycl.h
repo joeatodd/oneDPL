@@ -183,6 +183,21 @@ struct __init_processing
 //------------------------------------------------------------------------
 // transform_reduce
 //------------------------------------------------------------------------
+template <typename... _Ts>
+std::tuple<_Ts...>
+select_from_group(sycl::sub_group __sg, std::tuple<_Ts...> __value, unsigned int __idx)
+{
+    return std::apply(
+        [__sg, __idx](auto&&... elems) { return std::make_tuple(sycl::select_from_group(__sg, elems, __idx)...); },
+        __value);
+}
+
+template <typename _T>
+_T
+select_from_group(sycl::sub_group __sg, _T __value, unsigned int __idx)
+{
+    return sycl::select_from_group(__sg, __value, __idx);
+}
 
 // Load elements consecutively from global memory, transform them, and apply a local reduction. Each local result is
 // stored in local memory.
@@ -195,8 +210,8 @@ struct transform_reduce
 
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
     inline void
-    nonseq_impl(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset, const _AccLocal& __local_mem,
-                const _Acc&... __acc) const
+    nonseq_impl(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset,
+                const _AccLocal& __local_mem, const _Acc&... __acc) const
     {
 
         auto __global_idx = __item_id.get_global_id(0);
@@ -229,9 +244,103 @@ struct transform_reduce
         }
     }
 
+#ifdef ONEDPL_USE_SHUFFLE_TRANSFORM_REDUCE
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
     inline void
     seq_impl(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset, const _AccLocal& __local_mem,
+             const _Acc&... __acc) const
+    {
+
+        const sycl::sub_group __this_sg = __item_id.get_sub_group();
+        const _Size __sg_idx = __item_id.get_sub_group().get_group_linear_id();
+        const _Size __sg_size = __item_id.get_sub_group().get_local_range()[0];
+        const _Size __sg_local_idx = __item_id.get_sub_group().get_local_id()[0];
+
+        const _Size __group_start_idx =
+            __global_offset + __item_id.get_group_linear_id() * __item_id.get_local_range(0) * __iters_per_work_item;
+        const _Size __sg_start_idx = __group_start_idx + __sg_idx * __sg_size * __iters_per_work_item;
+
+        const _Size __adjusted_global_id = __sg_start_idx + __sg_local_idx;
+        const _Size __adjusted_n = __global_offset + __n;
+
+        typename _AccLocal::value_type __res_0;
+        typename _AccLocal::value_type __res_1;
+
+        const bool __first_half = __sg_local_idx * 2 < __sg_size;
+        const bool __even_idx = __sg_local_idx % 2 == 0;
+        const unsigned int __my_half_idx = __sg_local_idx % (__sg_size / 2);
+        const unsigned int __first_idx = __my_half_idx * 2 + !__first_half;
+        const unsigned int __second_idx = __my_half_idx * 2 + __first_half;
+
+        bool __check_range = (__sg_start_idx + __sg_size * __iters_per_work_item) > __adjusted_n;
+
+        if (!__check_range)
+        {
+            // 1. load first __stride elements into 1st half of local mem
+            __res_0 = __unary_op(__adjusted_global_id, __acc...);
+            _ONEDPL_PRAGMA_UNROLL
+            for (_Size __i = 1; __i < __iters_per_work_item; ++__i)
+            {
+                // 2. load next __stride elements into 2nd half of local mem
+                __res_1 = __unary_op(__adjusted_global_id + __sg_size * __i, __acc...);
+
+                // 3. reduce local_mem in order from 2*__stride elems to __stride elems
+
+                typename _AccLocal::value_type __recv_0 =
+                    select_from_group(__this_sg, __even_idx ? __res_0 : __res_1, __first_idx);
+                typename _AccLocal::value_type __recv_1 =
+                    select_from_group(__this_sg, __even_idx ? __res_1 : __res_0, __second_idx);
+
+                __res_0 = __binary_op(__first_half ? __recv_0 : __recv_1, __first_half ? __recv_1 : __recv_0);
+            }
+        }
+        else if (__adjusted_global_id < __adjusted_n)
+        {
+            const _Size __items_to_process =
+                std::min(oneapi::dpl::__internal::__dpl_ceiling_div(__adjusted_n - __sg_start_idx, __sg_size),
+                         static_cast<_Size>(__iters_per_work_item));
+
+            // 1. load first __stride elements into 1st register
+            if (__adjusted_global_id < __adjusted_n)
+                __res_0 = __unary_op(__adjusted_global_id, __acc...);
+
+            for (_Size __i = 1; __i < __items_to_process; ++__i)
+            {
+                // 2. load next __stride elements into 2nd register
+                if (__sg_start_idx + __sg_size * __i + __sg_local_idx < __adjusted_n)
+                    __res_1 = __unary_op(__adjusted_global_id + __sg_size * __i, __acc...);
+
+                // 3. reduce local_mem in order from 2*__sg_size elems to __sg_size elems
+                // 3 cases:
+                // 1. totally in range, do a binary reduction into __res, then write to local mem
+                // 2. totally out of range, do nothing
+                // 3. 1st value in range, load it to __res, write to local mem
+                const _Size __last_idx = __sg_start_idx + (__i - 1) * __sg_size + __sg_local_idx * 2 + 1;
+                bool __in_range = __last_idx < __adjusted_n;
+                bool __half_in_range = __last_idx <= __adjusted_n;
+
+                typename _AccLocal::value_type __recv_0 =
+                    select_from_group(__this_sg, __even_idx ? __res_0 : __res_1, __first_idx);
+                typename _AccLocal::value_type __recv_1 =
+                    select_from_group(__this_sg, __even_idx ? __res_1 : __res_0, __second_idx);
+
+                if (__in_range)
+                {
+                    __res_0 = __binary_op(__first_half ? __recv_0 : __recv_1, __first_half ? __recv_1 : __recv_0);
+                }
+                else if (__half_in_range)
+                {
+                    __res_0 = __first_half ? __recv_0 : __recv_1;
+                }
+            }
+        }
+        __local_mem[__item_id.get_local_id(0)] = __res_0;
+    }
+
+#else
+    template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
+    void
+    seq_impl(const _NDItemId __item_id, const _Size __n, const _Size __global_offset, const _AccLocal& __local_mem,
              const _Acc&... __acc) const
     {
         auto __global_idx = __item_id.get_global_id(0);
@@ -258,7 +367,7 @@ struct transform_reduce
             __local_mem[__local_idx] = __res;
         }
     }
-
+#endif
     template <typename _NDItemId, typename _Size, typename _AccLocal, typename... _Acc>
     inline void
     operator()(const _NDItemId& __item_id, const _Size& __n, const _Size& __global_offset, const _AccLocal& __local_mem,
@@ -284,6 +393,25 @@ struct transform_reduce
 
             _Size __last_wg_contrib = std::min(__last_wg_remainder, static_cast<_Size>(__work_group_size));
             return __full_group_contrib + __last_wg_contrib;
+        }
+        else
+        {
+#ifdef ONEDPL_USE_SHUFFLE_TRANSFORM_REDUCE
+            _Size __sg_size = 32; //TODO: unhardcode
+            _Size __items_per_sub_group = __sg_size * __iters_per_work_item;
+            _Size __full_sub_group_contrib = (__n / __items_per_sub_group) * __sg_size;
+            _Size __last_sg_remainder = __n % __items_per_sub_group;
+
+            _Size __last_stride_remainder = __n % __sg_size;
+            bool __less_than_1_stride = (__last_sg_remainder / __sg_size) == 0;
+            _Size __last_sg_contrib =
+                __less_than_1_stride
+                    ? __last_stride_remainder
+                    : oneapi::dpl::__internal::__dpl_ceiling_div(__sg_size + __last_stride_remainder, 2);
+            return __full_sub_group_contrib + __last_sg_contrib;
+#else
+            return oneapi::dpl::__internal::__dpl_ceiling_div(__n, __iters_per_work_item);
+#endif // ONEDPL_USE_SHUFFLE_TRANSFORM_REDUCE
         }
 #endif // __SPIRV__
 
