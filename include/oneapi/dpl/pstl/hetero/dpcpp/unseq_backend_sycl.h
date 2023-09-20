@@ -463,7 +463,7 @@ struct reduce_over_sub_group
 
     template <typename _NDItemId, typename _Size, typename _AccLocal>
     inline _Tp
-    reduce_impl(const _NDItemId& __item_id, const _Size& __n, const _Tp& __val, const _AccLocal& __local_mem,
+    reduce_impl(const _NDItemId& __item_id, const _Size& __n, const _Tp& __val,
                 std::true_type /*has_known_identity*/) const
     {
       auto __sg = __item_id.get_sub_group();
@@ -479,7 +479,7 @@ struct reduce_over_sub_group
  
     template <typename _NDItemId, typename _Size, typename _AccLocal>
     inline _Tp
-    reduce_impl(const _NDItemId& __item_id, const _Size& __n, const _Tp& __val, const _AccLocal& __local_mem,
+    reduce_impl(const _NDItemId& __item_id, const _Size& __n, const _Tp& __val,
                 std::false_type /*has_known_identity*/) const
     {
       auto __sg = __item_id.get_sub_group();
@@ -491,9 +491,9 @@ struct reduce_over_sub_group
 
     template <typename _NDItemId, typename _Size, typename _AccLocal>
     inline _Tp
-    operator()(const _NDItemId& __item_id, const _Size& __n, const _Tp& __val, const _AccLocal& __local_mem) const
+    operator()(const _NDItemId& __item_id, const _Size& __n, const _Tp& __val, const _AccLocal& /*__local_mem*/) const
     {
-        return reduce_impl(__item_id, __n, __val, __local_mem, __has_known_identity<_BinaryOperation1, _Tp>{});
+        return reduce_impl(__item_id, __n, __val, __has_known_identity<_BinaryOperation1, _Tp>{});
     }
 
     template <typename _InitType, typename _Result>
@@ -501,12 +501,6 @@ struct reduce_over_sub_group
     apply_init(const _InitType& __init, _Result&& __result) const
     {
         __init_processing<_Tp>{}(__init, __result, __bin_op1);
-    }
-
-    inline ::std::size_t
-    local_mem_req(const ::std::uint16_t& __work_group_size) const
-    {
-        return __work_group_size;
     }
 };
 

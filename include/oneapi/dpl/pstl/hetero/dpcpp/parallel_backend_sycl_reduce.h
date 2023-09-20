@@ -121,8 +121,7 @@ struct __parallel_transform_reduce_sub_group_submitter<__sub_group_size, __iters
         sycl::event __reduce_event = __exec.queue().submit([&, __n](sycl::handler& __cgh) {
             oneapi::dpl::__ranges::__require_access(__cgh, __rngs...); // get an access to data under SYCL buffer
             sycl::accessor __res_acc{__res, __cgh, sycl::write_only, __dpl_sycl::__no_init{}};
-            ::std::size_t __local_mem_size = __reduce_pattern.local_mem_req(__sub_group_size);
-            __dpl_sycl::__local_accessor<_Tp> __temp_local(sycl::range<1>(__local_mem_size), __cgh);
+            __dpl_sycl::__local_accessor<_Tp> __temp_local(sycl::range<1>(0), __cgh);
             __cgh.parallel_for<_Name...>(
                 sycl::nd_range<1>(sycl::range<1>(__sub_group_size), sycl::range<1>(__sub_group_size)),
                 [=](sycl::nd_item<1> __item_id) [[sycl::reqd_sub_group_size(__sub_group_size)]] {
