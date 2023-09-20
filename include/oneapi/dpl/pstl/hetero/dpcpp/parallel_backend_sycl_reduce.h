@@ -490,7 +490,7 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _ReduceOp __reduce_op, _T
     if (__work_group_size >= 256)
     {
 #ifdef USE_SUB_GROUP_REDUCE
-        constexpr int sg_size = 16;
+        constexpr int sg_size = 32;
         if (__n <= 32)
         {
             return __parallel_transform_reduce_sub_group_impl<sg_size, 32/sg_size, _Tp, _isComm>(
