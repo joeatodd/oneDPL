@@ -461,7 +461,7 @@ struct reduce_over_sub_group
        return __val;
     }
 
-    template <typename _NDItemId, typename _Size, typename _AccLocal>
+    template <typename _NDItemId, typename _Size>
     inline _Tp
     reduce_impl(const _NDItemId& __item_id, const _Size& __n, const _Tp& __val,
                 std::true_type /*has_known_identity*/) const
@@ -477,7 +477,7 @@ struct reduce_over_sub_group
       return shuffle_sub_group_reduce(__val, __sg, __n, std::true_type());
     }
  
-    template <typename _NDItemId, typename _Size, typename _AccLocal>
+    template <typename _NDItemId, typename _Size>
     inline _Tp
     reduce_impl(const _NDItemId& __item_id, const _Size& __n, const _Tp& __val,
                 std::false_type /*has_known_identity*/) const
@@ -530,21 +530,23 @@ struct reduce_over_group
       auto __local_idx = __item_id.get_local_id(0);
       auto __global_idx = __item_id.get_global_id(0);
 
-      if (__global_idx >= __n)
-          __val = __known_identity<_BinaryOperation1, _Tp>;
+      _Tp __temp = __val;
 
-      __val = shuffle_sub_group_reduce(__val, __sg);
+      if (__global_idx >= __n)
+          __temp = __known_identity<_BinaryOperation1, _Tp>;
+
+      __temp = shuffle_sub_group_reduce(__temp, __sg);
 
       if (__sg.get_local_linear_id() == 0)
-          __local_mem[__sg_group_id] = __val;
+          __local_mem[__sg_group_id] = __temp;
       __item_id.barrier();
 
-      __val = (__local_idx < __sg.get_group_range().size()) ? __local_mem[__local_idx] : __known_identity<_BinaryOperation1, _Tp>;
+      __temp = (__local_idx < __sg.get_group_range().size()) ? __local_mem[__local_idx] : __known_identity<_BinaryOperation1, _Tp>;
 
       if (__sg_group_id == 0)
-          __val = shuffle_sub_group_reduce(__val, __sg);
+          __temp = shuffle_sub_group_reduce(__temp, __sg);
 
-       return __val;
+       return __temp;
     }
  
 #else //ONEDPL_USE_SHUFFLE_ROG
@@ -557,13 +559,7 @@ struct reduce_over_group
     {
         auto __local_idx = __item_id.get_local_id(0);
         auto __global_idx = __item_id.get_global_id(0);
-        if (__global_idx >= __n)
-        {
-            // Fill the rest of local buffer with init elements so each of inclusive_scan method could correctly work
-            // for each work-item in sub-group
-            __val = __known_identity<_BinaryOperation1, _Tp>;
-        }
-        return __dpl_sycl::__reduce_over_group(__item_id.get_group(), __val, __bin_op1);
+        return __dpl_sycl::__reduce_over_group(__item_id.get_group(), __global_idx >= __n ? __known_identity<_BinaryOperation1, _Tp> : __val, __bin_op1);
     }
 
 #endif //ONEDPL_USE_SHUFFLE_ROG
