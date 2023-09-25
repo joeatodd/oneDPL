@@ -471,10 +471,8 @@ struct reduce_over_sub_group
       auto __local_idx = __item_id.get_local_id(0);
       auto __global_idx = __item_id.get_global_id(0);
 
-      if (__global_idx >= __n)
-          __val = __known_identity<_BinaryOperation1, _Tp>;
-
-      return shuffle_sub_group_reduce(__val, __sg, __n, std::true_type());
+      return shuffle_sub_group_reduce(__global_idx >= __n ? __known_identity<_BinaryOperation1, _Tp> : __val,
+                                        __sg, __n, std::true_type());
     }
  
     template <typename _NDItemId, typename _Size>
