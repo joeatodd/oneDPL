@@ -385,26 +385,78 @@ __pattern_min_element(_ExecutionPolicy&& __exec, _Iterator __first, _Iterator __
     using _ReduceValueType = tuple<_IndexValueType, _IteratorValueType>;
 
     auto __identity_init_fn = __acc_handler_minelement<_ReduceValueType>{};
-    auto __identity_reduce_fn = [__comp](_ReduceValueType __a, _ReduceValueType __b) {
+    auto __identity_reduce_fn = [__comp](_ReduceValueType __a, _ReduceValueType __b)
+    {
         using ::std::get;
+#if !defined(ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH) || !ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH
+#    pragma message("__identity_reduce_fn: ONEAPI_MAX_ELEMENT_NON_COMMUTATIVE")
         if (__comp(get<1>(__b), get<1>(__a)))
         {
             return __b;
         }
         return __a;
+#endif
+#if ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH == 1
+#    pragma message("__identity_reduce_fn: ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH == 1")
+        if (__comp(get<1>(__b), get<1>(__a)))
+        {
+            return __b;
+        }
+        if (__comp(get<1>(__a), get<1>(__b)))
+        {
+            return __a;
+        }
+        if (get<0>(__b) < get<0>(__a))
+            return __b;
+        return __a;
+#endif
+#if ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH == 2
+#    pragma message("__identity_reduce_fn: ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH == 2")
+        if (__comp(get<1>(__b), get<1>(__a)))
+        {
+            return __b;
+        }
+        if (__comp(get<1>(__a), get<1>(__b)))
+        {
+            return __a;
+        }
+        return (get<0>(__b) < get<0>(__a)) ? __b : __a;
+#endif
+#if ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH == 3
+#    pragma message("__identity_reduce_fn: ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH == 3")
+        bool _is_a_lt_b = __comp(get<1>(__a), get<1>(__b));
+        bool _is_b_lt_a = __comp(get<1>(__b), get<1>(__a));
+
+        if (_is_b_lt_a || (!_is_a_lt_b && get<0>(__b) < get<0>(__a)))
+        {
+            // To enter here, either
+            // a. (__a < __b)
+            // b. !(__a < __b) AND !(__b < __a) which means (__a == __b)
+            //    (__a == __b) && get<0>(__b) < get<0>(__a): equal elements with __b in a lower memory address
+            return __b;
+        }
+        return __a;
+#endif
+#if ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH > 3
+        static_assert(false, "Unsupported value for ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH (> 3)");
+#endif
     };
 
     auto __keep = oneapi::dpl::__ranges::__get_sycl_range<__par_backend_hetero::access_mode::read, _Iterator>();
     auto __buf = __keep(__first, __last);
 
+#if !defined(ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH) || !ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH
+    constexpr bool __commutative = false;
+#else
+    constexpr bool __commutative = true;
+#endif
     auto __ret_idx =
         oneapi::dpl::__par_backend_hetero::__parallel_transform_reduce<_ReduceValueType, decltype(__identity_reduce_fn),
-                                                                       decltype(__identity_init_fn), false>(
+                                                                       decltype(__identity_init_fn), __commutative>(
             ::std::forward<_ExecutionPolicy>(__exec), __identity_reduce_fn, __identity_init_fn,
             unseq_backend::__no_init_value{}, // no initial value
             __buf.all_view())
             .get();
-
     return __first + ::std::get<0>(__ret_idx);
 }
 
