@@ -388,7 +388,7 @@ __pattern_min_element(_ExecutionPolicy&& __exec, _Iterator __first, _Iterator __
     auto __identity_reduce_fn = [__comp](_ReduceValueType __a, _ReduceValueType __b)
     {
         using ::std::get;
-#if !defined(ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH) || !ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH
+#if !defined(ONEAPI_MIN_ELEMENT_COMMUTATIVE_BRANCH) || !ONEAPI_MIN_ELEMENT_COMMUTATIVE_BRANCH
 #    pragma message("__identity_reduce_fn: ONEAPI_MAX_ELEMENT_NON_COMMUTATIVE")
         if (__comp(get<1>(__b), get<1>(__a)))
         {
@@ -396,8 +396,8 @@ __pattern_min_element(_ExecutionPolicy&& __exec, _Iterator __first, _Iterator __
         }
         return __a;
 #endif
-#if ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH == 1
-#    pragma message("__identity_reduce_fn: ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH == 1")
+#if ONEAPI_MIN_ELEMENT_COMMUTATIVE_BRANCH == 1
+#    pragma message("__identity_reduce_fn: ONEAPI_MIN_ELEMENT_COMMUTATIVE_BRANCH == 1")
         if (__comp(get<1>(__b), get<1>(__a)))
         {
             return __b;
@@ -410,8 +410,8 @@ __pattern_min_element(_ExecutionPolicy&& __exec, _Iterator __first, _Iterator __
             return __b;
         return __a;
 #endif
-#if ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH == 2
-#    pragma message("__identity_reduce_fn: ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH == 2")
+#if ONEAPI_MIN_ELEMENT_COMMUTATIVE_BRANCH == 2
+#    pragma message("__identity_reduce_fn: ONEAPI_MIN_ELEMENT_COMMUTATIVE_BRANCH == 2")
         if (__comp(get<1>(__b), get<1>(__a)))
         {
             return __b;
@@ -422,8 +422,8 @@ __pattern_min_element(_ExecutionPolicy&& __exec, _Iterator __first, _Iterator __
         }
         return (get<0>(__b) < get<0>(__a)) ? __b : __a;
 #endif
-#if ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH == 3
-#    pragma message("__identity_reduce_fn: ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH == 3")
+#if ONEAPI_MIN_ELEMENT_COMMUTATIVE_BRANCH == 3
+#    pragma message("__identity_reduce_fn: ONEAPI_MIN_ELEMENT_COMMUTATIVE_BRANCH == 3")
         bool _is_a_lt_b = __comp(get<1>(__a), get<1>(__b));
         bool _is_b_lt_a = __comp(get<1>(__b), get<1>(__a));
 
@@ -437,15 +437,21 @@ __pattern_min_element(_ExecutionPolicy&& __exec, _Iterator __first, _Iterator __
         }
         return __a;
 #endif
-#if ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH > 3
-        static_assert(false, "Unsupported value for ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH (> 3)");
+#if ONEAPI_MIN_ELEMENT_COMMUTATIVE_BRANCH == 4
+#    pragma message("__identity_reduce_fn: ONEAPI_MIN_ELEMENT_COMMUTATIVE_BRANCH == 4")
+        return (__comp(get<1>(__b), get<1>(__a)) || (!__comp(get<1>(__a), get<1>(__b)) && get<0>(__b) < get<0>(__a)))
+                   ? __b
+                   : __a;
+#endif
+#if ONEAPI_MIN_ELEMENT_COMMUTATIVE_BRANCH > 4
+        static_assert(false, "Unsupported value for ONEAPI_MIN_ELEMENT_COMMUTATIVE_BRANCH (> 4)");
 #endif
     };
 
     auto __keep = oneapi::dpl::__ranges::__get_sycl_range<__par_backend_hetero::access_mode::read, _Iterator>();
     auto __buf = __keep(__first, __last);
 
-#if !defined(ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH) || !ONEAPI_MAX_ELEMENT_COMMUTATIVE_BRANCH
+#if !defined(ONEAPI_MIN_ELEMENT_COMMUTATIVE_BRANCH) || !ONEAPI_MIN_ELEMENT_COMMUTATIVE_BRANCH
     constexpr bool __commutative = false;
 #else
     constexpr bool __commutative = true;
