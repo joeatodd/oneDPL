@@ -62,8 +62,7 @@ __pattern_transform_reduce(_ExecutionPolicy&& __exec, _RandomAccessIterator1 __f
                                                                           ::std::true_type /*is_commutative*/>(
                ::std::forward<_ExecutionPolicy>(__exec), __binary_op1, _Functor{__binary_op2},
                unseq_backend::__init_value<_RepackedTp>{__init}, // initial value
-               __buf1.all_view(), __buf2.all_view())
-        .get();
+               __buf1.all_view(), __buf2.all_view());
 }
 
 //------------------------------------------------------------------------
@@ -90,8 +89,7 @@ __pattern_transform_reduce(_ExecutionPolicy&& __exec, _ForwardIterator __first, 
                                                                           ::std::true_type /*is_commutative*/>(
                ::std::forward<_ExecutionPolicy>(__exec), __binary_op, _Functor{__unary_op},
                unseq_backend::__init_value<_RepackedTp>{__init}, // initial value
-               __buf.all_view())
-        .get();
+               __buf.all_view());
 }
 
 //------------------------------------------------------------------------

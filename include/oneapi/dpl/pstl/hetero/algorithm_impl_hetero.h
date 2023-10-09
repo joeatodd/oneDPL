@@ -400,8 +400,7 @@ __pattern_min_element(_ExecutionPolicy&& __exec, _Iterator __first, _Iterator __
                                                                        ::std::false_type /*is_commutative*/>(
             ::std::forward<_ExecutionPolicy>(__exec), __reduce_fn, __transform_fn,
             unseq_backend::__no_init_value{}, // no initial value
-            __buf.all_view())
-            .get();
+            __buf.all_view());
 
     return __first + ::std::get<0>(__ret_idx);
 }
@@ -468,8 +467,7 @@ __pattern_minmax_element(_ExecutionPolicy&& __exec, _Iterator __first, _Iterator
                                                                                 ::std::false_type /*is_commutative*/>(
                      ::std::forward<_ExecutionPolicy>(__exec), __reduce_fn, __transform_fn,
                      unseq_backend::__no_init_value{}, // no initial value
-                     __buf.all_view())
-                     .get();
+                     __buf.all_view());
 
     return ::std::make_pair<_Iterator, _Iterator>(__first + ::std::get<0>(__ret), __first + ::std::get<1>(__ret));
 }
@@ -565,8 +563,7 @@ __pattern_count(_ExecutionPolicy&& __exec, _Iterator __first, _Iterator __last, 
                                                                           ::std::true_type /*is_commutative*/>(
                ::std::forward<_ExecutionPolicy>(__exec), __reduce_fn, __transform_fn,
                unseq_backend::__no_init_value{}, // no initial value
-               __buf.all_view())
-        .get();
+               __buf.all_view());
 }
 
 //------------------------------------------------------------------------
@@ -1021,8 +1018,7 @@ __pattern_is_partitioned(_ExecutionPolicy&& __exec, _Iterator __first, _Iterator
                                                                                 ::std::false_type /*is_commutative*/>(
                      ::std::forward<_ExecutionPolicy>(__exec), __reduce_fn, __transform_fn,
                      unseq_backend::__no_init_value{}, // no initial value
-                     __buf.all_view())
-                     .get();
+                     __buf.all_view());
 
     return __broken != __reduce_fn(_ReduceValueType{__all_true}, __res);
 }
@@ -1310,8 +1306,7 @@ __pattern_lexicographical_compare(_ExecutionPolicy&& __exec, _Iterator1 __first1
                                                                        ::std::false_type /*is_commutative*/>(
             ::std::forward<_ExecutionPolicy>(__exec), __reduce_fn, __transform_fn,
             unseq_backend::__no_init_value{}, // no initial value
-            __buf1.all_view(), __buf2.all_view())
-            .get();
+            __buf1.all_view(), __buf2.all_view());
 
     return __ret_idx ? __ret_idx == 1 : (__last1 - __first1) < (__last2 - __first2);
 }
