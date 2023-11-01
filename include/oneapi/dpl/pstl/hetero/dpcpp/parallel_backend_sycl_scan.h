@@ -149,7 +149,7 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
     //std::size_t wgsize = n/num_wgs/__elems_per_workload;
     std::size_t num_workloads = __n_uniform / __elems_per_workload;
     std::size_t wgsize = num_workloads > 256 ? 256 : num_workloads;
-    std::size_t num_wgs = num_workloads / wgsize;
+    std::size_t num_wgs = oneapi::dpl::__internal::__dpl_ceiling_div(num_workloads, wgsize);
 
     //
     //std::size_t wgsize = 256;
@@ -181,7 +181,7 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
     __queue.memcpy(debug11v.data(), status_flags, status_flags_size * sizeof(uint32_t));
 
     for (int i = 0; i < status_flags_size-1; ++i)
-        std::cout << "flag_before " << i << " " << debug11v[i] << std::endl;
+        std::cout << "flag_before " << i << " " status_flags << debug11v[i] << std::endl;
 
     uint32_t* debug1 = sycl::malloc_device<uint32_t>(status_flags_size, __queue);
     uint32_t* debug2 = sycl::malloc_device<uint32_t>(status_flags_size, __queue);
