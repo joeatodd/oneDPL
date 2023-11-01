@@ -136,29 +136,30 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
     //std::size_t num_wgs = 256;
 
     // TODO: use wgsize and iters per item from _KernelParam
-    //constexpr ::std::size_t __elems_per_item = _KernelParam::data_per_workitem;
+    //constexpr ::std::size_t __elems_per_workload = _KernelParam::data_per_workitem;
 #ifdef _ONEDPL_SCAN_ITER_SIZE
-    constexpr ::std::size_t __elems_per_item = _ONEDPL_SCAN_ITER_SIZE;
+    constexpr ::std::size_t __elems_per_workload = _ONEDPL_SCAN_ITER_SIZE;
 #else
-    constexpr ::std::size_t __elems_per_item = 8;
+    constexpr ::std::size_t __elems_per_workload = 8;
 #endif
     // Next power of 2 greater than or equal to __n
     auto __n_uniform = n;
     if ((__n_uniform & (__n_uniform - 1)) != 0)
         __n_uniform = oneapi::dpl::__internal::__dpl_bit_floor(n) << 1;
-    //std::size_t wgsize = n/num_wgs/__elems_per_item;
-    std::size_t wgsize = 256;
-    std::size_t num_items = __n_uniform/__elems_per_item;
-    std::size_t num_wgs = num_items/wgsize;
+    //std::size_t wgsize = n/num_wgs/__elems_per_workload;
+    std::size_t num_workloads = __n_uniform / __elems_per_workload;
+    std::size_t wgsize = num_workloads > 256 ? 256 : num_workloads;
+    std::size_t num_wgs = num_workloads / wgsize;
+
     //
     //std::size_t wgsize = 256;
-    //std::size_t num_items = 114688;
-
+    //std::size_t num_workloads = 114688;
 
     constexpr int status_flag_padding = 32;
     std::uint32_t status_flags_size = num_wgs+1+status_flag_padding;
 
-    //printf("launching kernel items=%lu wgs=%lu wgsize=%lu elems_per_iter=%lu max_cu=%u\n", num_items, num_wgs, wgsize, __elems_per_item, __max_cu);
+    // printf("launching kernel num_workloads=%lu wgs=%lu wgsize=%lu elems_per_iter=%lu max_cu=%u\n", num_workloads,
+    //  num_wgs, wgsize, __elems_per_workload, __max_cu);
 
     uint32_t* status_flags = sycl::malloc_device<uint32_t>(status_flags_size, __queue);
     //__queue.memset(status_flags, 0, status_flags_size * sizeof(uint32_t));
@@ -172,7 +173,7 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
     });
 
 
-    std::uint32_t elems_in_tile = wgsize*__elems_per_item;
+    std::uint32_t elems_in_tile = wgsize*__elems_per_workload;
 
 #define SCAN_KT_DEBUG 0
 #if SCAN_KT_DEBUG
@@ -194,7 +195,7 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
         hdl.depends_on(fill_event);
 
         oneapi::dpl::__ranges::__require_access(hdl, __in_rng, __out_rng);
-        hdl.parallel_for<class scan_kt_main>(sycl::nd_range<1>(num_items, wgsize), [=](const sycl::nd_item<1>& item)  [[intel::reqd_sub_group_size(32)]] {
+        hdl.parallel_for<class scan_kt_main>(sycl::nd_range<1>(num_workloads, wgsize), [=](const sycl::nd_item<1>& item)  [[intel::reqd_sub_group_size(32)]] {
             auto group = item.get_group();
             auto subgroup = item.get_sub_group();
 
