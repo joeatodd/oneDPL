@@ -170,6 +170,7 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
     // One byte flags?
     uint32_t* status_flags = sycl::malloc_device<uint32_t>(status_flags_size, __queue);
     _Type* sums = sycl::malloc_device<_Type>(status_flags_size, __queue);
+    auto fill_event_2 = __queue.fill<_Type>(sums, _Type{0}, status_flags_size);
 
     auto fill_event = __queue.submit([&](sycl::handler& hdl) {
         hdl.parallel_for<class scan_kt_init>(sycl::range<1>{status_flags_size}, [=](const sycl::item<1>& item)  {
@@ -198,7 +199,7 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
 
     auto event = __queue.submit([&](sycl::handler& hdl) {
         auto tile_id_lacc = sycl::local_accessor<std::uint32_t, 1>(sycl::range<1>{1}, hdl);
-        hdl.depends_on(fill_event);
+        hdl.depends_on(std::vector<sycl::event>{fill_event, fill_event_2});
 
         oneapi::dpl::__ranges::__require_access(hdl, __in_rng, __out_rng);
         hdl.parallel_for<class scan_kt_main>(sycl::nd_range<1>(num_workloads, wgsize), [=](const sycl::nd_item<1>& item)  [[intel::reqd_sub_group_size(32)]] {
