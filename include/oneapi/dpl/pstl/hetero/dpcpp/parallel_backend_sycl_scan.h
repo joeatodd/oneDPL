@@ -190,7 +190,7 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
     for (int i = 0; i < status_flags_size-1; ++i)
         std::cout << "flag_before " << i << " " status_flags << debug11v[i] << std::endl;
 
-    uint32_t* debug1 = sycl::malloc_device<uint32_t>(status_flags_size, __queue);
+    _Type* debug1 = sycl::malloc_device<_Type>(status_flags_size, __queue);
     uint32_t* debug2 = sycl::malloc_device<uint32_t>(status_flags_size, __queue);
     uint32_t* debug3 = sycl::malloc_device<uint32_t>(status_flags_size, __queue);
     uint32_t* debug4 = sycl::malloc_device<uint32_t>(status_flags_size, __queue);
@@ -268,18 +268,21 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
     event.wait();
 
 #if SCAN_KT_DEBUG
-    std::vector<uint32_t> debug1v(status_flags_size);
+    std::vector<_Type> debug1v(status_flags_size);
     std::vector<uint32_t> debug2v(status_flags_size);
     std::vector<uint32_t> debug3v(status_flags_size);
     std::vector<uint32_t> debug4v(status_flags_size);
     std::vector<uint32_t> debug5v(status_flags_size);
     std::vector<uint32_t> debug6v(status_flags_size);
-    __queue.memcpy(debug1v.data(), debug1, status_flags_size * sizeof(uint32_t));
+    std::vector<_Type> debug7v(status_flags_size);
+    __queue.memcpy(debug1v.data(), debug1, status_flags_size * sizeof(_Type));
     __queue.memcpy(debug2v.data(), debug2, status_flags_size * sizeof(uint32_t));
     __queue.memcpy(debug3v.data(), debug3, status_flags_size * sizeof(uint32_t));
     __queue.memcpy(debug4v.data(), debug4, status_flags_size * sizeof(uint32_t));
     __queue.memcpy(debug5v.data(), debug5, status_flags_size * sizeof(uint32_t));
     __queue.memcpy(debug6v.data(), status_flags, status_flags_size * sizeof(uint32_t));
+    __queue.memcpy(debug7v.data(), sums, status_flags_size * sizeof(_Type));
+    __queue.wait();
 
     for (int i = 0; i < status_flags_size-1; ++i)
         std::cout << "tile " << i << " " << debug5v[i] << std::endl;
@@ -287,10 +290,11 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
         std::cout << "local_sum " << i << " " << debug1v[i] << std::endl;
     for (int i = 0; i < status_flags_size-1; ++i)
     {
-        auto val = (debug6v[i] & __scan_status_flag<_Type>::value_mask);
+        auto val = debug7v[i];
         int a = val / elems_in_tile;
         int b = val % elems_in_tile;
-        std::cout << "flags " << i << " " << std::bitset<32>(debug6v[i]) << " (" << val<< " = " << a << "/" << elems_in_tile << "+" << b <<")" << std::endl;
+        std::cout << "flags " << i << " " << std::bitset<32>(debug6v[i]) << " (" << val << " = " << a << "/"
+                  << elems_in_tile << "+" << b << ")" << std::endl;
     }
     for (int i = 0; i < status_flags_size-1; ++i)
         std::cout << "lookback " << i << " " << debug2v[i] << std::endl;
@@ -298,9 +302,15 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
         std::cout << "offset " << i << " " << debug3v[i] << std::endl;
     for (int i = 0; i < status_flags_size-1; ++i)
         std::cout << "end " << i << " " << debug4v[i] << std::endl;
+    sycl::free(debug1, __queue);
+    sycl::free(debug2, __queue);
+    sycl::free(debug3, __queue);
+    sycl::free(debug4, __queue);
+    sycl::free(debug5, __queue);
 #endif
 
     sycl::free(status_flags, __queue);
+    sycl::free(sums, __queue);
 }
 
 // The generic structure for configuring a kernel
