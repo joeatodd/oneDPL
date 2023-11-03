@@ -32,7 +32,8 @@ struct __scan_status_flag
     // xxxx10 - full
     // xxx100 - out of bounds
 
-    using _AtomicRefT = sycl::atomic_ref<::std::uint32_t, sycl::memory_order::relaxed, sycl::memory_scope::device, sycl::access::address_space::global_space>;
+    using _AtomicRefT = sycl::atomic_ref<::std::uint32_t, sycl::memory_order::relaxed, sycl::memory_scope::device,
+                                         sycl::access::address_space::global_space>;
     static constexpr std::uint32_t NOT_READY = 0;
     static constexpr std::uint32_t PARTIAL_MASK = 1;
     static constexpr std::uint32_t FULL_MASK = 2;
@@ -50,7 +51,6 @@ struct __scan_status_flag
     void
     set_partial(_T val)
     {
-        atomic_flag.store(NOT_READY);
         (*scanned_partial_value) = val;
         atomic_flag.store(PARTIAL_MASK);
     }
@@ -58,7 +58,6 @@ struct __scan_status_flag
     void
     set_full(_T val)
     {
-        atomic_flag.store(NOT_READY);
         (*scanned_full_value) = val;
         atomic_flag.store(FULL_MASK);
     }
@@ -85,7 +84,9 @@ struct __scan_status_flag
             do
             {
                 flag = tile_atomic.load();
-            } while (!sycl::all_of_group(subgroup, flag != NOT_READY));
+                // } while (!sycl::all_of_group(subgroup, flag != NOT_READY));
+                // Force to use full_flag. Triggers the bug with more consistency.
+            } while (!sycl::any_of_group(subgroup, flag == FULL_MASK));
 
             bool is_full = flag == FULL_MASK;
 
@@ -95,20 +96,20 @@ struct __scan_status_flag
 
             auto lowest_item_with_full = sycl::ctz(is_full_ballot_bits);
 
+            size_t contrib_offset = tile + padding - local_id + is_full * num_elements;
 #if INNER_SCAN_KT_DEBUG
             // printf("  - Inner(%d, %u): is_full %d, flag %d, mask %d\n", local_id, tile_id, is_full, flag, FULL_MASK);
             // printf("  - Inner(%d, %u): partial_offset = %lu, full_offset %lu, f*n = %lu \n", local_id, tile_id,
             //        tile + padding - local_id, tile + padding - local_id + num_elements, is_full * num_elements);
-            // printf("  - Inner(%d, %u): tile %u = is_full %d, offset %lu \n", local_id, tile_id, tile, is_full, offset);
+            // printf("  - Inner(%d, %u): tile %u = is_full %d, offset %lu \n", local_id, tile_id, tile, is_full, contrib_offset);
 #endif
 
-            size_t offset = tile + padding - local_id + is_full * num_elements;
-            _T val = *(sums + offset);
-            _T contribution = local_id <= lowest_item_with_full ? val : _T{0};
+            _T val = *(sums + contrib_offset);
+            _T contribution = local_id <= lowest_item_with_full && (tile - local_id >= 0) ? val : _T{0};
 
 #if INNER_SCAN_KT_DEBUG
-            printf("  - Inner(%d, %d, tile_id = %u): tile %u = is_full %d, contribution %d, prev_sum = %d \n", group_id,
-                   local_id, tile_id, tile, is_full, contribution, sum);
+            printf("  - Inner(%d, %d, tile_id = %u): tile %d, curr %d, is_f %d, contrib %d, prev_sum %d \n", group_id,
+                   local_id, tile_id, tile, tile - local_id, is_full, contribution, sum);
 #endif
             // Sum all of the partial results from the tiles found, as well as the full contribution from the closest tile (if any)
             sum += sycl::reduce_over_group(subgroup, contribution, bin_op);
@@ -183,8 +184,14 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
                 status_flags[id] = id < status_flag_padding ? __scan_status_flag<_Type>::OUT_OF_BOUNDS : 0;
         });
     });
-    // fill_event = __queue.fill<_Type>(sums, 0, status_flags_size * 2);
-    // __queue.wait();
+    fill_event = __queue.submit([&](sycl::handler& hdl) {
+        hdl.parallel_for(sycl::range<1>{status_flags_size}, [=](const sycl::item<1>& item) {
+            int id = item.get_linear_id();
+            sums[id] = id;
+            sums[id + status_flags_size] = id;
+        });
+    });
+    __queue.wait();
 
     std::uint32_t elems_in_tile = wgsize*__elems_per_workload;
 
@@ -269,8 +276,8 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
                 if (group.leader())
                 {
 #if INNER_SCAN_KT_DEBUG
-                    printf("Leader of tile_id = %d, prev_sum = %d, local_sum = %d, storing = %d", tile_id, prev_sum,
-                           local_sum, prev_sum + local_sum);
+                    printf("Leader tile_id = %d, prev = %d, local = %d, store = %d \n", tile_id, prev_sum, local_sum,
+                           prev_sum + local_sum);
 #endif
                     flag.set_full(prev_sum + local_sum);
                 }
@@ -319,8 +326,11 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
         auto val = debug6v[i] == __scan_status_flag<_Type>::FULL_MASK ? debug7v[i + status_flags_size] : debug7v[i];
         int a = val / elems_in_tile;
         int b = val % elems_in_tile;
-        std::cout << "flags " << i << " " << std::bitset<32>(debug6v[i]) << " (" << val << " = " << a << "/"
-                  << elems_in_tile << "+" << b << ")" << std::endl;
+        auto expected_val = (i - 32 + 1) * 2048;
+        auto is_correct_val = (i - 32 >= 0) && (expected_val != val);
+        std::cout << "flags " << i << " tile_id = " << i - 32 << " " << std::bitset<4>(debug6v[i]) << " (" << val
+                  << " = " << a << "/" << elems_in_tile << "+" << b << ") "
+                  << "Expected " << expected_val << (is_correct_val ? " FAILED " : "") << std::endl;
     }
     for (int i = 0; i < status_flags_size-1; ++i)
         std::cout << "lookback " << i << " " << debug2v[i] << std::endl;
