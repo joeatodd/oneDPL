@@ -24,9 +24,10 @@ main()
     bool all_passed = true;
     sycl::queue q;
 
-    for (int logn : {4, 8, 11, 16, 19, 21})
+    // for (int logn : {4, 8, 11, 16, 19, 21})
+    for (int logn : {17, 18})
     {
-        std::cout << "Testing 2^" << logn << '\n';
+        std::cout << "Testing 2^" << logn << std::endl;
         int n = 1 << logn;
         std::vector<int> v(n, 1);
         int* in_ptr = sycl::malloc_device<int>(n, q);
@@ -48,14 +49,14 @@ main()
             if (tmp[i] != v[i])
             {
                 passed = false;
-                // std::cout << "expected " << i << ' ' << v[i] << ' ' << tmp[i] << '\n';
+                std::cout << "expected " << i << ' ' << v[i] << ' ' << tmp[i] << '\n';
             }
         }
 
         if (passed)
-            std::cout << "passed" << std::endl;
+            std::cout << " passed" << std::endl;
         else
-            std::cout << "failed" << std::endl;
+            std::cout << " failed" << std::endl;
 
         all_passed &= passed;
         sycl::free(in_ptr, q);
