@@ -89,10 +89,8 @@ struct __scan_status_flag
             bool is_full = flag == FULL_MASK;
 
             auto is_full_ballot = sycl::ext::oneapi::group_ballot(subgroup, is_full);
-            ::std::uint32_t is_full_ballot_bits{};
-            is_full_ballot.extract_bits(is_full_ballot_bits);
 
-            auto lowest_item_with_full = sycl::ctz(is_full_ballot_bits);
+            auto lowest_item_with_full = is_full_ballot.find_low();
 
             size_t contrib_offset = tile + padding - local_id + is_full * num_elements;
 #if INNER_SCAN_KT_DEBUG
@@ -120,7 +118,7 @@ struct __scan_status_flag
             // If we found a full value, we can stop looking at previous tiles. Otherwise,
             // keep going through tiles until we either find a full tile or we've completely
             // recomputed the prefix using partial values
-            if (is_full_ballot_bits)
+            if (is_full_ballot.any())
                 break;
 
             //if (i++ > 10) break;
