@@ -21,7 +21,7 @@ namespace oneapi::dpl::experimental::kt
 
 inline namespace igpu {
 
-constexpr size_t SUBGROUP_SIZE = 32;
+constexpr ::std::size_t SUBGROUP_SIZE = 32;
 
 template<typename _T>
 struct __scan_status_flag
@@ -138,22 +138,21 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
     // extra_mem_for_aligment of the datatype _Type
     // First tile_sums_size partial scanned values
     // Second tile_sums_size full scanned values (current partial plus all previous workgroups partial)
-    char* mem_pool =
-        sycl::malloc_device<char>(status_flags_size + extra_mem_for_aligment + 2 * tile_sums_size, __queue);
+    auto scratch = sycl::buffer<char>(sycl::range<1>{status_flags_size + extra_mem_for_aligment + 2 * tile_sums_size});
 
     std::size_t tile_sums_offset = status_flags_size + extra_mem_for_aligment;
-
-    std::uint32_t* status_flags = reinterpret_cast<std::uint32_t*>(mem_pool);
-    _Type* tile_sums = reinterpret_cast<_Type*>(mem_pool + tile_sums_offset);
 
     ::std::size_t fill_num_wgs = oneapi::dpl::__internal::__dpl_ceiling_div(status_flags_elems, wgsize);
 
     auto fill_event = __queue.submit(
         [&](sycl::handler& hdl)
         {
+            sycl::accessor scratch_acc{scratch, hdl, sycl::write_only};
             hdl.parallel_for<class scan_kt_init>(sycl::nd_range<1>{fill_num_wgs * wgsize, wgsize},
                                                  [=](const sycl::nd_item<1>& item)
                                                  {
+                                                     std::uint32_t* status_flags = reinterpret_cast<std::uint32_t*>(
+                                                         scratch_acc.template get_multi_ptr<sycl::access::decorated::yes>().get());
                                                      int id = item.get_global_linear_id();
                                                      if (id < status_flags_elems)
                                                          status_flags[id] =
@@ -164,11 +163,18 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
         });
 
     auto event = __queue.submit([&](sycl::handler& hdl) {
+        sycl::accessor scratch_acc{scratch, hdl, sycl::read_write};
+        
         auto tile_id_lacc = sycl::local_accessor<std::uint32_t, 1>(sycl::range<1>{1}, hdl);
         hdl.depends_on(fill_event);
 
         oneapi::dpl::__ranges::__require_access(hdl, __in_rng, __out_rng);
         hdl.parallel_for<class scan_kt_main>(sycl::nd_range<1>(num_workitems, wgsize), [=](const sycl::nd_item<1>& item)  [[intel::reqd_sub_group_size(SUBGROUP_SIZE)]] {
+            std::uint32_t* status_flags = reinterpret_cast<std::uint32_t*>(
+                scratch_acc.template get_multi_ptr<sycl::access::decorated::yes>().get());
+            _Type* tile_sums = reinterpret_cast<_Type*>(
+                scratch_acc.template get_multi_ptr<sycl::access::decorated::yes>().get() + tile_sums_offset);
+
             auto group = item.get_group();
             auto subgroup = item.get_sub_group();
 
@@ -216,13 +222,6 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
             sycl::joint_inclusive_scan(group, in_begin, in_end, out_begin, __binary_op, prev_sum);
         });
     });
-
-    auto free_event = __queue.submit(
-        [=](sycl::handler& hdl)
-        {
-            hdl.depends_on(event);
-            hdl.host_task([=](){ sycl::free(mem_pool, __queue); });
-        });
 
     event.wait();
 }
