@@ -164,7 +164,9 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
         });
 
     auto event = __queue.submit([&](sycl::handler& hdl) {
+#ifndef _ONEDPL_SCAN_KT_DISABLE_DYNAMIC_TILE
         auto tile_id_lacc = sycl::local_accessor<std::uint32_t, 1>(sycl::range<1>{1}, hdl);
+#endif
         auto tile_vals = sycl::local_accessor<_Type, 1>(sycl::range<1>{elems_in_tile}, hdl);
         hdl.depends_on(fill_event);
 
@@ -175,6 +177,7 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
             auto stride = item.get_local_range(0);
             auto subgroup = item.get_sub_group();
 
+#ifndef _ONEDPL_SCAN_KT_DISABLE_DYNAMIC_TILE
             // Obtain unique ID for this work-group that will be used in decoupled lookback
             if (group.leader())
             {
@@ -185,6 +188,9 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
             }
             sycl::group_barrier(group);
             std::uint32_t tile_id = tile_id_lacc[0];
+#else
+            std::uint32_t tile_id = item.get_group(0);
+#endif
 
             // Global load into local
             auto wg_current_offset = (tile_id*elems_in_tile);
