@@ -211,17 +211,20 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
             auto in_end = in_begin + wg_local_memory_size;
             auto out_begin = __out_rng.begin() + wg_current_offset;
 
-            auto local_sum = sycl::joint_reduce(group, in_begin, in_end, __binary_op);
-            _Type prev_sum = 0;
+            sycl::joint_inclusive_scan(group, in_begin, in_end, in_begin, __binary_op);
 
+            _Type prev_sum = 0;
             // The first sub-group will query the previous tiles to find a prefix
             if (subgroup.get_group_id() == 0)
             {
                 __scan_status_flag<_Type> flag(tile_id, status_flags, tile_sums, tile_sums_elems);
 
+                _Type local_sum;
                 if (group.leader())
+                {
+                    local_sum = *(in_end-1);
                     flag.set_partial(local_sum);
-
+                }
                 // Find lowest work-item that has a full result (if any) and sum up subsequent partial results to obtain this tile's exclusive sum
                 prev_sum = flag.cooperative_lookback(tile_id, subgroup, __binary_op, status_flags, tile_sums);
 
@@ -230,7 +233,16 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
             }
 
             prev_sum = sycl::group_broadcast(group, prev_sum, 0);
-            sycl::joint_inclusive_scan(group, in_begin, in_end, out_begin, __binary_op, prev_sum);
+            if (wg_next_offset <= n) {
+                _ONEDPL_PRAGMA_UNROLL
+                for (std::uint32_t i = 0; i < elems_per_workitem; ++i)
+                    __out_rng[wg_current_offset + local_id + stride * i] = __binary_op(prev_sum, tile_vals[local_id + stride * i]);
+            } else {
+                for (std::uint32_t i = 0; i < elems_per_workitem; ++i) {
+                    if (wg_current_offset + local_id + stride * i < n)
+                        __out_rng[wg_current_offset + local_id + stride * i] = __binary_op(prev_sum, tile_vals[local_id + stride * i]);
+                }
+            }
         });
     });
 
