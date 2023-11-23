@@ -19,7 +19,10 @@
 #include <cstdint>
 #include <sycl/sycl.hpp>
 
-namespace oneapi::dpl::experimental::kt
+namespace oneapi::dpl::experimental
+{
+
+namespace kt
 {
 
 inline namespace igpu {
@@ -572,11 +575,14 @@ struct kernel_param
     using kernel_name = KernelName;
 };
 
-template <typename _KernelParam, typename _Size, typename _InIterator, typename _OutIterator, typename _BinaryOp>
+template <typename _KernelParam, typename _InIterator, typename _OutIterator, typename _BinaryOp>
 void
-single_pass_inclusive_scan(sycl::queue __q, _Size __n, _InIterator __in_begin, _InIterator __in_end,
-                           _OutIterator __out_begin, _BinaryOp __binary_op)
+single_pass_inclusive_scan(sycl::queue __queue, _InIterator __in_begin, _InIterator __in_end, _OutIterator __out_begin,
+                           _BinaryOp __binary_op)
 {
+    auto __n = __in_end - __in_begin;
+    assert(__n > 0);
+
     auto __keep1 =
         oneapi::dpl::__ranges::__get_sycl_range<__par_backend_hetero::access_mode::read, _InIterator>();
     auto __buf1 = __keep1(__in_begin, __in_end);
@@ -587,52 +593,57 @@ single_pass_inclusive_scan(sycl::queue __q, _Size __n, _InIterator __in_begin, _
     // Avoid aspect query overhead for sizeof(Types) > 32 bits
     if constexpr (sizeof(typename std::iterator_traits<_InIterator>::value_type) <= sizeof(std::uint32_t))
     {
-        if (q.get_device().has(sycl::aspect::atomic64))
+        if (__queue.get_device().has(sycl::aspect::atomic64))
         {
             single_pass_scan_impl<_KernelParam, /* Inclusive */ std::true_type, /* UseAtomic64 */ std::true_type, /* UseDynamicTileID */ std::false_type>(
-                q, __buf1.all_view(), __buf2.all_view(), __binary_op);
+                __queue, __buf1.all_view(), __buf2.all_view(), __binary_op);
         }
         else
         {
             single_pass_scan_impl<_KernelParam, /* Inclusive */ std::true_type, /* UseAtomic64 */ std::false_type, /* UseDynamicTileID */ std::false_type>(
-                q, __buf1.all_view(), __buf2.all_view(), __binary_op);
+                __queue, __buf1.all_view(), __buf2.all_view(), __binary_op);
         }
     }
     else
     {
         single_pass_scan_impl<_KernelParam, /* Inclusive */ std::true_type, /* UseAtomic64 */ std::false_type, /* UseDynamicTileID */ std::false_type>(
-            q, __buf1.all_view(), __buf2.all_view(), __binary_op);
+            __queue, __buf1.all_view(), __buf2.all_view(), __binary_op);
     }
 }
 
 } // inline namespace igpu
 
+} // namespace kt
+
 template <typename _InIterator, typename _OutIterator, typename _BinaryOp>
 auto
-single_pass_inclusive_scan(sycl::queue q, _InIterator __in_begin, _InIterator __in_end, _OutIterator __out_begin,
-                           _BinaryOp __binary_op)
+inclusive_scan(sycl::queue __queue, _InIterator __in_begin, _InIterator __in_end, _OutIterator __out_begin,
+               _BinaryOp __binary_op)
 {
     auto __n = __in_end - __in_begin;
     assert(__n > 0);
 
-    using KernelParamsSmall = oneapi::dpl::experimental::kt::kernel_param<4, 128, class ScanKernel>;
-    using KernelParamsMedium = oneapi::dpl::experimental::kt::kernel_param<4, 128, class ScanKernel>;
-    using KernelParamsBig = oneapi::dpl::experimental::kt::kernel_param<4, 128, class ScanKernel>;
-
+    // TODO: Do we the single_workgroup implementation called from here?
     if (__n <= 1024) // 1 << 10
     {
-        return single_pass_inclusive_scan<KernelParamsSmall>(q, __n, __in_begin, __in_end, __out_begin, __binary_op);
+        using KernelParamsSmall = oneapi::dpl::experimental::kt::kernel_param<4, 128, class SmallScanKernel>;
+        return oneapi::dpl::experimental::kt::single_pass_inclusive_scan<KernelParamsSmall>(__queue, __in_begin, __in_end,
+                                                                                            __out_begin, __binary_op);
     }
     else if (__n <= 131072) // 1 << 17
     {
-        return single_pass_inclusive_scan<KernelParamsMedium>(q, __n, __in_begin, __in_end, __out_begin, __binary_op);
+        using KernelParamsMedium = oneapi::dpl::experimental::kt::kernel_param<4, 128, class MediumScanKernel>;
+        return oneapi::dpl::experimental::kt::single_pass_inclusive_scan<KernelParamsMedium>(__queue, __in_begin, __in_end,
+                                                                                             __out_begin, __binary_op);
     }
     else
     {
-        return single_pass_inclusive_scan<KernelParamsBig>(q, __n, __in_begin, __in_end, __out_begin, __binary_op);
+        using KernelParamsLarge = oneapi::dpl::experimental::kt::kernel_param<16, 128, class LargeScanKernel>;
+        return oneapi::dpl::experimental::kt::single_pass_inclusive_scan<KernelParamsLarge>(__queue, __in_begin, __in_end,
+                                                                                            __out_begin, __binary_op);
     }
 }
 
-} // namespace oneapi::dpl::experimental::kt
+} // namespace oneapi::dpl::experimental
 
 #endif /* _ONEDPL_parallel_backend_sycl_scan_H */
