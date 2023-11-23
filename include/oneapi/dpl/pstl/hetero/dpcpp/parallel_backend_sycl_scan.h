@@ -626,13 +626,13 @@ inclusive_scan(sycl::queue __queue, _InIterator __in_begin, _InIterator __in_end
     // TODO: Do we the single_workgroup implementation called from here?
     if (__n <= 1024) // 1 << 10
     {
-        using KernelParamsSmall = oneapi::dpl::experimental::kt::kernel_param<4, 128, class SmallScanKernel>;
+        using KernelParamsSmall = oneapi::dpl::experimental::kt::kernel_param<6, 128, class SmallScanKernel>;
         return oneapi::dpl::experimental::kt::single_pass_inclusive_scan<KernelParamsSmall>(__queue, __in_begin, __in_end,
                                                                                             __out_begin, __binary_op);
     }
-    else if (__n <= 131072) // 1 << 17
+    else if (__n <= 262144) // 1 << 18
     {
-        using KernelParamsMedium = oneapi::dpl::experimental::kt::kernel_param<4, 128, class MediumScanKernel>;
+        using KernelParamsMedium = oneapi::dpl::experimental::kt::kernel_param<6, 128, class MediumScanKernel>;
         return oneapi::dpl::experimental::kt::single_pass_inclusive_scan<KernelParamsMedium>(__queue, __in_begin, __in_end,
                                                                                              __out_begin, __binary_op);
     }
