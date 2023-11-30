@@ -475,6 +475,36 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _ReduceOp __reduce_op, _T
         // Use two-step tree reduction.
         // First step reduces __work_group_size * __iters_per_work_item_device_kernel elements.
         // Second step reduces __work_group_size * __iters_per_work_item_work_group_kernel elements.
+        else if (__n <= 65536)
+        {
+            return __parallel_transform_reduce_mid_impl<_Tp, 256, 1, 1>(::std::forward<_ExecutionPolicy>(__exec), __n,
+                                                                        __reduce_op, __transform_op, __init,
+                                                                        ::std::forward<_Ranges>(__rngs)...);
+        }
+        else if (__n <= 131072)
+        {
+            return __parallel_transform_reduce_mid_impl<_Tp, 256, 2, 1>(::std::forward<_ExecutionPolicy>(__exec), __n,
+                                                                        __reduce_op, __transform_op, __init,
+                                                                        ::std::forward<_Ranges>(__rngs)...);
+        }
+        else if (__n <= 262144)
+        {
+            return __parallel_transform_reduce_mid_impl<_Tp, 256, 4, 1>(::std::forward<_ExecutionPolicy>(__exec), __n,
+                                                                        __reduce_op, __transform_op, __init,
+                                                                        ::std::forward<_Ranges>(__rngs)...);
+        }
+        else if (__n <= 524288)
+        {
+            return __parallel_transform_reduce_mid_impl<_Tp, 256, 8, 1>(::std::forward<_ExecutionPolicy>(__exec), __n,
+                                                                        __reduce_op, __transform_op, __init,
+                                                                        ::std::forward<_Ranges>(__rngs)...);
+        }
+        else if (__n <= 1048576)
+        {
+            return __parallel_transform_reduce_mid_impl<_Tp, 256, 16, 1>(::std::forward<_ExecutionPolicy>(__exec), __n,
+                                                                         __reduce_op, __transform_op, __init,
+                                                                         ::std::forward<_Ranges>(__rngs)...);
+        }
         else if (__n <= 2097152)
         {
             return __parallel_transform_reduce_mid_impl<_Tp, 256, 32, 1, _Commutative>(
