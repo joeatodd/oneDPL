@@ -117,8 +117,7 @@ struct __parallel_transform_reduce_small_submitter<_Tp, __work_group_size, __ite
 
         const _Size __n_items = oneapi::dpl::__internal::__dpl_ceiling_div(__n, __iters_per_work_item);
 
-        const bool __use_usm = __use_USM_host_allocations(__exec.queue());
-        __storage __res_container = __storage<_ExecutionPolicy, _Tp>(__exec, __use_usm, 1);
+        __usm_host_or_buffer_storage<_ExecutionPolicy, _Tp> __res_container(__exec, 1);
 
         sycl::event __reduce_event = __exec.queue().submit([&, __n](sycl::handler& __cgh) {
             oneapi::dpl::__ranges::__require_access(__cgh, __rngs...); // get an access to data under SYCL buffer
@@ -389,7 +388,6 @@ struct __parallel_transform_reduce_impl
                             }
 
                             __temp_acc[__offset_1 + __group_idx] = __result;
-                        }
                     });
             });
             __is_first = false;
@@ -477,31 +475,31 @@ __parallel_transform_reduce(_ExecutionPolicy&& __exec, _ReduceOp __reduce_op, _T
         // Second step reduces __work_group_size * __iters_per_work_item_work_group_kernel elements.
         else if (__n <= 65536)
         {
-            return __parallel_transform_reduce_mid_impl<_Tp, 256, 1, 1>(::std::forward<_ExecutionPolicy>(__exec), __n,
+            return __parallel_transform_reduce_mid_impl<_Tp, 256, 1, 1, _Commutative>(::std::forward<_ExecutionPolicy>(__exec), __n,
                                                                         __reduce_op, __transform_op, __init,
                                                                         ::std::forward<_Ranges>(__rngs)...);
         }
         else if (__n <= 131072)
         {
-            return __parallel_transform_reduce_mid_impl<_Tp, 256, 2, 1>(::std::forward<_ExecutionPolicy>(__exec), __n,
+            return __parallel_transform_reduce_mid_impl<_Tp, 256, 2, 1, _Commutative>(::std::forward<_ExecutionPolicy>(__exec), __n,
                                                                         __reduce_op, __transform_op, __init,
                                                                         ::std::forward<_Ranges>(__rngs)...);
         }
         else if (__n <= 262144)
         {
-            return __parallel_transform_reduce_mid_impl<_Tp, 256, 4, 1>(::std::forward<_ExecutionPolicy>(__exec), __n,
+            return __parallel_transform_reduce_mid_impl<_Tp, 256, 4, 1, _Commutative>(::std::forward<_ExecutionPolicy>(__exec), __n,
                                                                         __reduce_op, __transform_op, __init,
                                                                         ::std::forward<_Ranges>(__rngs)...);
         }
         else if (__n <= 524288)
         {
-            return __parallel_transform_reduce_mid_impl<_Tp, 256, 8, 1>(::std::forward<_ExecutionPolicy>(__exec), __n,
+            return __parallel_transform_reduce_mid_impl<_Tp, 256, 8, 1, _Commutative>(::std::forward<_ExecutionPolicy>(__exec), __n,
                                                                         __reduce_op, __transform_op, __init,
                                                                         ::std::forward<_Ranges>(__rngs)...);
         }
         else if (__n <= 1048576)
         {
-            return __parallel_transform_reduce_mid_impl<_Tp, 256, 16, 1>(::std::forward<_ExecutionPolicy>(__exec), __n,
+            return __parallel_transform_reduce_mid_impl<_Tp, 256, 16, 1, _Commutative>(::std::forward<_ExecutionPolicy>(__exec), __n,
                                                                          __reduce_op, __transform_op, __init,
                                                                          ::std::forward<_Ranges>(__rngs)...);
         }
