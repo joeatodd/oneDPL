@@ -48,8 +48,17 @@ struct ScanMemoryManager
         return tile_id_begin;
     };
 
+    // TODO: make set_ptrs use this to prevent code duplication
+    ::std::size_t
+    get_scratch_size(::std::size_t num_wgs) {
+        ::std::size_t scan_memory_size = _LookbackScanMemory::get_memory_size(num_wgs);
+        constexpr ::std::size_t padded_tileid_size = TileId::get_padded_memory_size();
+
+        return scan_memory_size + padded_tileid_size;
+    }
+
     void
-    allocate(::std::size_t num_wgs)
+    set_ptrs(void* scratch_mem, ::std::size_t num_wgs)
     {
         ::std::size_t scan_memory_size = _LookbackScanMemory::get_memory_size(num_wgs);
         constexpr ::std::size_t padded_tileid_size = TileId::get_padded_memory_size();
@@ -57,7 +66,7 @@ struct ScanMemoryManager
 
         auto mem_size_bytes = scan_memory_size + padded_tileid_size;
 
-        scratch = sycl::malloc_device<::std::uint8_t>(mem_size_bytes, q);
+        scratch = reinterpret_cast<::std::uint8_t*>(scratch_mem);
 
         scan_memory_begin = scratch;
 
@@ -66,23 +75,6 @@ struct ScanMemoryManager
 
         tile_id_begin = reinterpret_cast<_TileIdT*>(
             ::std::align(::std::alignment_of_v<_TileIdT>, tileid_size, base_tileid_ptr, remainder));
-    }
-
-    sycl::event
-    async_free(sycl::event dependency)
-    {
-        return q.submit(
-            [e = dependency, ptr = scratch, q_ = q](sycl::handler& hdl)
-            {
-                hdl.depends_on(e);
-                hdl.host_task([=]() { sycl::free(ptr, q_); });
-            });
-    }
-
-    void
-    free()
-    {
-        sycl::free(scratch, q);
     }
 
   private:
@@ -512,7 +504,7 @@ single_pass_scan_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __ou
     ::std::size_t num_workitems = num_wgs * wgsize;
 
     ScanMemoryManager<_Type, _UseAtomic64, LookbackScanMemory, TileId> scratch(__queue);
-    scratch.allocate(num_wgs);
+    scratch.set_ptrs(num_wgs);
 
     // Memory Structure:
     // [Lookback Scan Memory, Tile Id Counter]
@@ -811,14 +803,36 @@ single_pass_copy_if_impl_single_wg(sycl::queue __queue, _InRange&& __in_rng, _Ou
                                  __num_rng[0] = wg_count;
                          });
     });
+}
 
-    event.wait();
+template <typename _KernelParam, typename _UseAtomic64, typename _UseDynamicTileID, typename _InRange,
+          typename _OutRange, typename _NumSelectedRange, typename _UnaryPredicate>
+size_t
+get_copy_if_scratch_size_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __out_rng, _NumSelectedRange __num_rng,
+                         _UnaryPredicate pred)
+{
+    using _Type = oneapi::dpl::__internal::__value_t<_InRange>;
+    using _SizeT = uint64_t;
+    using _TileIdT = TileId::_TileIdT;
+    using _LookbackScanMemory = LookbackScanMemory<_SizeT, _UseAtomic64>;
+
+    const ::std::size_t n = __in_rng.size();
+
+    constexpr ::std::size_t wgsize = _KernelParam::workgroup_size;
+    constexpr ::std::size_t elems_per_workitem = _KernelParam::elems_per_workitem;
+
+    // Avoid non_uniform n by padding up to a multiple of wgsize
+    constexpr std::uint32_t elems_in_tile = wgsize * elems_per_workitem;
+    ::std::size_t num_wgs = oneapi::dpl::__internal::__dpl_ceiling_div(n, elems_in_tile);
+
+    ScanMemoryManager<_SizeT, _UseAtomic64, LookbackScanMemory, TileId> scratch(__queue);
+    return scratch.get_scratch_size(num_wgs);
 }
 
 template <typename _KernelParam, typename _UseAtomic64, typename _UseDynamicTileID, typename _InRange,
           typename _OutRange, typename _NumSelectedRange, typename _UnaryPredicate>
 void
-single_pass_copy_if_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __out_rng, _NumSelectedRange __num_rng,
+single_pass_copy_if_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& __out_rng, _NumSelectedRange __num_rng, void* __scratch_ptr,
                          _UnaryPredicate pred)
 {
     using _Type = oneapi::dpl::__internal::__value_t<_InRange>;
@@ -838,7 +852,7 @@ single_pass_copy_if_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& _
     ::std::size_t num_workitems = num_wgs * wgsize;
 
     ScanMemoryManager<_SizeT, _UseAtomic64, LookbackScanMemory, TileId> scratch(__queue);
-    scratch.allocate(num_wgs);
+    scratch.set_ptrs(__scratch_ptr, num_wgs);
 
     // Memory Structure:
     // [Lookback Scan Memory, Tile Id Counter]
@@ -958,9 +972,6 @@ single_pass_copy_if_impl(sycl::queue __queue, _InRange&& __in_rng, _OutRange&& _
                                  __num_rng[0] = start_idx + wg_count;
                          });
     });
-
-    event.wait();
-    scratch.free();
 }
 
 template <typename _KernelParam, typename _InIterator, typename _OutIterator, typename _NumSelectedRange,
@@ -986,8 +997,8 @@ single_pass_single_wg_copy_if(sycl::queue __queue, _InIterator __in_begin, _InIt
 
 template <typename _KernelParam, typename _InIterator, typename _OutIterator, typename _NumSelectedRange,
           typename _UnaryPredicate>
-void
-single_pass_copy_if(sycl::queue __queue, _InIterator __in_begin, _InIterator __in_end, _OutIterator __out_begin,
+size_t
+get_copy_if_scratch_size(sycl::queue __queue, _InIterator __in_begin, _InIterator __in_end, _OutIterator __out_begin,
                     _NumSelectedRange __num_begin, _UnaryPredicate pred)
 {
     auto __n = __in_end - __in_begin;
@@ -1001,8 +1012,29 @@ single_pass_copy_if(sycl::queue __queue, _InIterator __in_begin, _InIterator __i
         oneapi::dpl::__ranges::__get_sycl_range<__par_backend_hetero::access_mode::write, _NumSelectedRange>();
     auto __buf_num = __keep2(__num_begin, __num_begin + 1);
 
-    single_pass_copy_if_impl<_KernelParam, /* UseAtomic64 */ std::true_type, /* UseDynamicTileID */ std::true_type>(
+    return get_copy_if_scratch_size_impl<_KernelParam, /* UseAtomic64 */ std::true_type, /* UseDynamicTileID */ std::true_type>(
         __queue, __buf1.all_view(), __buf2.all_view(), __buf_num.all_view(), pred);
+}
+
+template <typename _KernelParam, typename _InIterator, typename _OutIterator, typename _NumSelectedRange,
+          typename _UnaryPredicate>
+void
+single_pass_copy_if(sycl::queue __queue, _InIterator __in_begin, _InIterator __in_end, _OutIterator __out_begin,
+                    _NumSelectedRange __num_begin, void* __scratch_begin, _UnaryPredicate pred)
+{
+    auto __n = __in_end - __in_begin;
+
+    auto __keep1 = oneapi::dpl::__ranges::__get_sycl_range<__par_backend_hetero::access_mode::read, _InIterator>();
+    auto __buf1 = __keep1(__in_begin, __in_end);
+    auto __keep2 = oneapi::dpl::__ranges::__get_sycl_range<__par_backend_hetero::access_mode::write, _OutIterator>();
+    auto __buf2 = __keep2(__out_begin, __out_begin + __n);
+
+    auto __keep_num =
+        oneapi::dpl::__ranges::__get_sycl_range<__par_backend_hetero::access_mode::write, _NumSelectedRange>();
+    auto __buf_num = __keep2(__num_begin, __num_begin + 1);
+
+    single_pass_copy_if_impl<_KernelParam, /* UseAtomic64 */ std::true_type, /* UseDynamicTileID */ std::true_type>(
+        __queue, __buf1.all_view(), __buf2.all_view(), __buf_num.all_view(), __scratch_begin, pred);
 }
 
 } // inline namespace igpu
